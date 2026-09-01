@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Remitos PelSAS</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">Remitos <span>PelSAS</span></div>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="nuevo">Nuevo remito</button>
+    <button class="tab-btn" data-tab="clientes">Clientes</button>
+    <button class="tab-btn" data-tab="historial">Historial</button>
+  </nav>
+</header>
+
+<main>
+
+  <!-- ===================== TAB: NUEVO REMITO ===================== -->
+  <section id="tab-nuevo" class="tab-panel active">
+    <div class="panel-grid">
+
+      <div class="panel-col">
+        <div class="card">
+          <h2>Cliente</h2>
+          <div class="field">
+            <input type="text" id="clienteBuscar" placeholder="Buscar cliente por nombre..." autocomplete="off" />
+            <div id="clienteResultados" class="dropdown-results"></div>
+          </div>
+          <div id="clienteSeleccionado" class="cliente-chip hidden">
+            <span id="clienteSeleccionadoNombre"></span>
+            <button id="clienteQuitar" type="button" title="Quitar cliente">✕</button>
+          </div>
+          <button id="btnNuevoCliente" type="button" class="btn-link">+ Nuevo cliente</button>
+        </div>
+
+        <div class="card">
+          <h2>Agregar producto</h2>
+          <div class="field">
+            <input type="text" id="productoBuscar" placeholder="Buscar por código o nombre..." autocomplete="off" />
+            <div id="productoResultados" class="dropdown-results"></div>
+          </div>
+          <p class="hint">También podés agregar un ítem manual si no está en el catálogo.</p>
+          <button id="btnItemManual" type="button" class="btn-link">+ Ítem manual</button>
+        </div>
+      </div>
+
+      <div class="panel-col panel-col-wide">
+        <div class="card">
+          <div class="card-header-row">
+            <h2>Detalle del remito</h2>
+            <input type="date" id="remitoFecha" />
+          </div>
+
+          <table class="items-table" id="itemsTable">
+            <thead>
+              <tr>
+                <th>Código</th>
+                <th>Descripción</th>
+                <th class="num">Cant.</th>
+                <th class="num">Precio</th>
+                <th class="num">Subtotal</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="itemsBody">
+              <tr id="itemsEmptyRow"><td colspan="6" class="empty-row">Todavía no agregaste productos</td></tr>
+            </tbody>
+          </table>
+
+          <div class="totals-row">
+            <span>Total</span>
+            <strong id="remitoTotal">$0</strong>
+          </div>
+
+          <div class="actions-row">
+            <button id="btnGuardarRemito" class="btn-primary">Guardar remito</button>
+            <button id="btnImprimirRemito" class="btn-secondary" disabled>Imprimir</button>
+            <button id="btnNuevoRemitoReset" class="btn-link hidden" type="button">Empezar remito nuevo</button>
+          </div>
+          <p id="nuevoRemitoMsg" class="msg"></p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ===================== TAB: CLIENTES ===================== -->
+  <section id="tab-clientes" class="tab-panel">
+    <div class="panel-grid">
+      <div class="panel-col">
+        <div class="card">
+          <h2>Clientes</h2>
+          <input type="text" id="clientesFiltro" placeholder="Filtrar por nombre..." autocomplete="off" />
+          <ul id="clientesLista" class="clientes-lista"></ul>
+        </div>
+      </div>
+      <div class="panel-col panel-col-wide">
+        <div class="card" id="clienteFichaCard">
+          <div id="clienteFichaVacio" class="empty-row">Elegí un cliente de la lista para ver su ficha</div>
+          <div id="clienteFicha" class="hidden">
+            <div class="ficha-header">
+              <h2 id="fichaNombre"></h2>
+              <button id="btnEditarCliente" class="btn-link">Editar</button>
+            </div>
+            <div class="ficha-datos">
+              <div><span>Teléfono</span><p id="fichaTelefono">—</p></div>
+              <div><span>Dirección</span><p id="fichaDireccion">—</p></div>
+              <div><span>Notas</span><p id="fichaNotas">—</p></div>
+            </div>
+
+            <div class="ficha-stats">
+              <div class="stat"><strong id="fichaTotalRemitos">0</strong><span>remitos</span></div>
+              <div class="stat"><strong id="fichaTotalComprado">$0</strong><span>comprado en total</span></div>
+              <div class="stat"><strong id="fichaUltimaCompra">—</strong><span>última compra</span></div>
+            </div>
+
+            <h3>Productos más comprados</h3>
+            <table class="items-table" id="fichaTopProductos">
+              <thead><tr><th>Producto</th><th class="num">Cant. total</th></tr></thead>
+              <tbody></tbody>
+            </table>
+
+            <h3>Historial de remitos</h3>
+            <table class="items-table" id="fichaHistorial">
+              <thead><tr><th>Fecha</th><th class="num">Total</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TAB: HISTORIAL ===================== -->
+  <section id="tab-historial" class="tab-panel">
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Todos los remitos</h2>
+        <input type="text" id="historialFiltro" placeholder="Filtrar por cliente..." autocomplete="off" />
+      </div>
+      <table class="items-table" id="historialTable">
+        <thead><tr><th>Fecha</th><th>Cliente</th><th class="num">Total</th><th></th></tr></thead>
+        <tbody id="historialBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<!-- ===================== MODAL: cliente nuevo/editar ===================== -->
+<div id="modalCliente" class="modal hidden">
+  <div class="modal-box">
+    <h2 id="modalClienteTitulo">Nuevo cliente</h2>
+    <label>Nombre <input type="text" id="modalNombre" /></label>
+    <label>Teléfono <input type="text" id="modalTelefono" /></label>
+    <label>Dirección <input type="text" id="modalDireccion" /></label>
+    <label>Notas <textarea id="modalNotas" rows="2"></textarea></label>
+    <div class="modal-actions">
+      <button id="modalClienteCancelar" class="btn-secondary" type="button">Cancelar</button>
+      <button id="modalClienteGuardar" class="btn-primary" type="button">Guardar</button>
+    </div>
+    <p id="modalClienteMsg" class="msg"></p>
+  </div>
+</div>
+
+<!-- ===================== MODAL: ítem manual ===================== -->
+<div id="modalItem" class="modal hidden">
+  <div class="modal-box">
+    <h2>Ítem manual</h2>
+    <label>Descripción <input type="text" id="itemManualDescripcion" /></label>
+    <label>Cantidad <input type="number" id="itemManualCantidad" value="1" min="0" step="1" /></label>
+    <label>Precio unitario <input type="number" id="itemManualPrecio" value="0" min="0" step="0.01" /></label>
+    <div class="modal-actions">
+      <button id="modalItemCancelar" class="btn-secondary" type="button">Cancelar</button>
+      <button id="modalItemAgregar" class="btn-primary" type="button">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== VISTA DE IMPRESIÓN ===================== -->
+<div id="printArea" class="print-area">
+  <h1>Remito</h1>
+  <p id="printFecha" class="print-fecha"></p>
+  <p id="printCliente" class="print-cliente"></p>
+  <table id="printTable">
+    <thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>Precio</th><th>Subtotal</th></tr></thead>
+    <tbody id="printBody"></tbody>
+  </table>
+  <p class="print-total">Total: <strong id="printTotal"></strong></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
