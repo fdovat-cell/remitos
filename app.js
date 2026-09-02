@@ -130,6 +130,7 @@ function setupNuevoRemito() {
         agregarItem({ codigo: p.codigo, descripcion: p.nombre, cantidad: 1, precio: p.precio });
         prodInput.value = "";
         prodResultados.innerHTML = "";
+        prodInput.focus();
       });
       prodResultados.appendChild(div);
     });
@@ -159,6 +160,7 @@ function setupNuevoRemito() {
     if (!descripcion || cantidad <= 0) return;
     agregarItem({ codigo: "", descripcion, cantidad, precio });
     document.getElementById("modalItem").classList.add("hidden");
+    document.getElementById("productoBuscar").focus();
   });
 
   // ---- Guardar / imprimir ----
