@@ -164,6 +164,9 @@ function setupNuevoRemito() {
   // ---- Guardar / imprimir ----
   document.getElementById("btnGuardarRemito").addEventListener("click", guardarRemito);
   document.getElementById("btnImprimirRemito").addEventListener("click", imprimirRemitoActual);
+  document.getElementById("btnDescargarRemito").addEventListener("click", () => {
+    if (window._ultimoRemito) descargarRemitoPDF(window._ultimoRemito);
+  });
   document.getElementById("btnNuevoRemitoReset").addEventListener("click", () => {
     resetNuevoRemito();
     document.getElementById("btnNuevoRemitoReset").classList.add("hidden");
@@ -185,6 +188,14 @@ function agregarItem(item) {
   renderItems();
 }
 
+function escapeAttr(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function renderItems() {
   const body = document.getElementById("itemsBody");
   body.innerHTML = "";
@@ -196,24 +207,34 @@ function renderItems() {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${it.codigo || "—"}</td>
-        <td>${it.descripcion}</td>
+        <td><input type="text" value="${escapeAttr(it.descripcion)}" data-idx="${i}" data-field="descripcion" class="desc-input" /></td>
         <td class="num"><input type="number" min="0" step="1" value="${it.cantidad}" data-idx="${i}" data-field="cantidad" /></td>
         <td class="num"><input type="number" min="0" step="0.01" value="${it.precio}" data-idx="${i}" data-field="precio" /></td>
-        <td class="num">${money(subtotal)}</td>
+        <td class="num row-subtotal">${money(subtotal)}</td>
         <td><button class="row-remove" data-idx="${i}" title="Quitar">✕</button></td>
       `;
       body.appendChild(tr);
     });
   }
 
-  body.querySelectorAll("input").forEach((inp) => {
+  body.querySelectorAll('input[data-field="descripcion"]').forEach((inp) => {
+    inp.addEventListener("input", () => {
+      items[Number(inp.dataset.idx)].descripcion = inp.value;
+    });
+  });
+
+  body.querySelectorAll('input[data-field="cantidad"], input[data-field="precio"]').forEach((inp) => {
     inp.addEventListener("input", () => {
       const idx = Number(inp.dataset.idx);
       const field = inp.dataset.field;
       items[idx][field] = Number(inp.value) || 0;
-      renderItems();
+      const subtotal = items[idx].cantidad * items[idx].precio;
+      inp.closest("tr").querySelector(".row-subtotal").textContent = money(subtotal);
+      const total = items.reduce((s, it) => s + it.cantidad * it.precio, 0);
+      document.getElementById("remitoTotal").textContent = money(total);
     });
   });
+
   body.querySelectorAll(".row-remove").forEach((btn) => {
     btn.addEventListener("click", () => {
       items.splice(Number(btn.dataset.idx), 1);
@@ -259,13 +280,14 @@ async function guardarRemito() {
   msg.textContent = "Remito guardado.";
   msg.className = "msg ok";
   document.getElementById("btnImprimirRemito").disabled = false;
+  document.getElementById("btnDescargarRemito").disabled = false;
   document.getElementById("btnNuevoRemitoReset").classList.remove("hidden");
   window._ultimoRemito = { cliente: clienteActual, fecha, items: [...items], total };
   cargarClientes();
 }
 
-function imprimirRemitoActual() {
-  const r = window._ultimoRemito;
+function imprimirRemitoActual(remito) {
+  const r = remito || window._ultimoRemito;
   if (!r) return;
   document.getElementById("printFecha").textContent = "Fecha: " + r.fecha;
   document.getElementById("printCliente").textContent = "Cliente: " + r.cliente.nombre;
@@ -280,6 +302,83 @@ function imprimirRemitoActual() {
   window.print();
 }
 
+function descargarRemitoPDF(remito) {
+  const r = remito;
+  if (!r || !window.jspdf) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+
+  doc.setFontSize(16);
+  doc.text("Remito", 14, 18);
+  doc.setFontSize(10);
+  doc.text("Fecha: " + r.fecha, 14, 26);
+  doc.setFontSize(12);
+  doc.text("Cliente: " + r.cliente.nombre, 14, 34);
+
+  let y = 46;
+  doc.setFontSize(9);
+  doc.setFont(undefined, "bold");
+  doc.text("Código", 14, y);
+  doc.text("Descripción", 38, y);
+  doc.text("Cant.", 138, y, { align: "right" });
+  doc.text("Precio", 165, y, { align: "right" });
+  doc.text("Subtotal", 196, y, { align: "right" });
+  doc.setFont(undefined, "normal");
+  doc.line(14, y + 2, 196, y + 2);
+  y += 8;
+
+  r.items.forEach((it) => {
+    if (y > 280) { doc.addPage(); y = 20; }
+    doc.text(String(it.codigo || "—"), 14, y);
+    doc.text(String(it.descripcion), 38, y, { maxWidth: 96 });
+    doc.text(String(it.cantidad), 138, y, { align: "right" });
+    doc.text(money(it.precio), 165, y, { align: "right" });
+    doc.text(money(it.cantidad * it.precio), 196, y, { align: "right" });
+    y += 7;
+  });
+
+  y += 4;
+  doc.line(14, y, 196, y);
+  y += 8;
+  doc.setFontSize(12);
+  doc.setFont(undefined, "bold");
+  doc.text("Total: " + money(r.total), 196, y, { align: "right" });
+
+  const nombreArchivo = `remito-${r.cliente.nombre.replace(/\s+/g, "_")}-${r.fecha}.pdf`;
+  doc.save(nombreArchivo);
+}
+
+// Trae un remito ya guardado (con cliente e ítems) para reimprimir o descargar.
+async function cargarRemitoCompleto(remitoId) {
+  const { data, error } = await sb
+    .from("remitos")
+    .select("id, fecha, total, clientes(nombre), remito_items(codigo, descripcion, cantidad, precio_unitario)")
+    .eq("id", remitoId)
+    .single();
+  if (error) { alert("Error al cargar el remito: " + error.message); return null; }
+  return {
+    cliente: { nombre: data.clientes?.nombre || "—" },
+    fecha: data.fecha,
+    total: data.total,
+    items: (data.remito_items || []).map((it) => ({
+      codigo: it.codigo,
+      descripcion: it.descripcion,
+      cantidad: it.cantidad,
+      precio: it.precio_unitario,
+    })),
+  };
+}
+
+async function reimprimirRemito(remitoId) {
+  const r = await cargarRemitoCompleto(remitoId);
+  if (r) imprimirRemitoActual(r);
+}
+
+async function redescargarRemito(remitoId) {
+  const r = await cargarRemitoCompleto(remitoId);
+  if (r) descargarRemitoPDF(r);
+}
+
 function resetNuevoRemito() {
   clienteActual = null;
   items = [];
@@ -288,6 +387,7 @@ function resetNuevoRemito() {
   document.getElementById("clienteBuscar").value = "";
   document.getElementById("remitoFecha").value = new Date().toISOString().slice(0, 10);
   document.getElementById("btnImprimirRemito").disabled = true;
+  document.getElementById("btnDescargarRemito").disabled = true;
   document.getElementById("nuevoRemitoMsg").textContent = "";
   renderItems();
 }
@@ -319,7 +419,7 @@ async function calcularTopProductos(clienteId) {
       conteo[it.descripcion] = (conteo[it.descripcion] || 0) + Number(it.cantidad);
     });
   });
-  return Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  return Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 15);
 }
 
 // ===================================================================
@@ -477,7 +577,7 @@ async function abrirFichaCliente(c) {
       conteo[key] = (conteo[key] || 0) + Number(it.cantidad);
     });
   });
-  const top = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const top = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 15);
   const topBody = document.querySelector("#fichaTopProductos tbody");
   topBody.innerHTML = top.length
     ? top.map(([nombre, cant]) => `<tr><td>${nombre}</td><td class="num">${cant}</td></tr>`).join("")
@@ -486,10 +586,21 @@ async function abrirFichaCliente(c) {
   // historial de remitos
   const histBody = document.querySelector("#fichaHistorial tbody");
   histBody.innerHTML = remitos.length
-    ? remitos.map((r) => `<tr><td>${r.fecha}</td><td class="num">${money(r.total)}</td><td><button class="row-remove" data-id="${r.id}" title="Borrar remito">✕</button></td></tr>`).join("")
+    ? remitos.map((r) => `<tr>
+        <td>${r.fecha}</td>
+        <td class="num">${money(r.total)}</td>
+        <td class="row-actions">
+          <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
+          <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
+          <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
+        </td>
+      </tr>`).join("")
     : `<tr><td colspan="3" class="empty-row">Sin remitos todavía</td></tr>`;
-  histBody.querySelectorAll(".row-remove").forEach((btn) => {
-    btn.addEventListener("click", () => borrarRemito(btn.dataset.id, async () => {
+  histBody.querySelectorAll("[data-action]").forEach((btn) => {
+    const id = btn.dataset.id;
+    if (btn.dataset.action === "print") btn.addEventListener("click", () => reimprimirRemito(id));
+    if (btn.dataset.action === "pdf") btn.addEventListener("click", () => redescargarRemito(id));
+    if (btn.dataset.action === "del") btn.addEventListener("click", () => borrarRemito(id, async () => {
       await abrirFichaCliente(c);
       await cargarClientes();
     }));
@@ -520,9 +631,21 @@ async function cargarHistorial() {
 
   const body = document.getElementById("historialBody");
   body.innerHTML = filtrados.length
-    ? filtrados.map((r) => `<tr><td>${r.fecha}</td><td>${r.clientes?.nombre || "—"}</td><td class="num">${money(r.total)}</td><td><button class="row-remove" data-id="${r.id}" title="Borrar remito">✕</button></td></tr>`).join("")
+    ? filtrados.map((r) => `<tr>
+        <td>${r.fecha}</td>
+        <td>${r.clientes?.nombre || "—"}</td>
+        <td class="num">${money(r.total)}</td>
+        <td class="row-actions">
+          <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
+          <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
+          <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
+        </td>
+      </tr>`).join("")
     : `<tr><td colspan="4" class="empty-row">No hay remitos todavía</td></tr>`;
-  body.querySelectorAll(".row-remove").forEach((btn) => {
-    btn.addEventListener("click", () => borrarRemito(btn.dataset.id, cargarHistorial));
+  body.querySelectorAll("[data-action]").forEach((btn) => {
+    const id = btn.dataset.id;
+    if (btn.dataset.action === "print") btn.addEventListener("click", () => reimprimirRemito(id));
+    if (btn.dataset.action === "pdf") btn.addEventListener("click", () => redescargarRemito(id));
+    if (btn.dataset.action === "del") btn.addEventListener("click", () => borrarRemito(id, cargarHistorial));
   });
 }

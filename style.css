@@ -194,11 +194,18 @@ input:focus, textarea:focus {
   vertical-align: middle;
 }
 .items-table .num { text-align: right; }
-.items-table input[type="number"] { width: 68px; padding: 5px 6px; text-align: right; }
+.items-table .num input[type="number"] { width: 68px; padding: 5px 6px; text-align: right; }
+.items-table .desc-input { width: 100%; min-width: 160px; padding: 5px 6px; }
 .empty-row { text-align: center; color: var(--ink-soft); padding: 20px 0; font-size: 0.9rem; }
 .row-remove {
   background: none; border: none; cursor: pointer; color: var(--warn); font-size: 1rem;
 }
+.row-actions { display: flex; gap: 6px; align-items: center; }
+.icon-btn {
+  background: none; border: none; cursor: pointer; font-size: 0.95rem; padding: 2px 4px;
+  border-radius: 4px;
+}
+.icon-btn:hover { background: var(--accent-soft); }
 
 .totals-row {
   display: flex;
