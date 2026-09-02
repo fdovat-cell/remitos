@@ -225,6 +225,9 @@ input:focus, textarea:focus {
 }
 .clientes-lista li:hover { background: var(--accent-soft); }
 .clientes-lista li.active { background: var(--accent); color: #fff; }
+.cliente-li-nombre { font-weight: 600; }
+.cliente-li-sub { font-size: 0.78rem; color: var(--ink-soft); margin-top: 2px; }
+.clientes-lista li.active .cliente-li-sub { color: rgba(255,255,255,0.75); }
 
 .ficha-header { display: flex; justify-content: space-between; align-items: center; }
 .ficha-header h2 { margin: 0; }

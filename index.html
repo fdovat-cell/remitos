@@ -34,6 +34,7 @@
             <span id="clienteSeleccionadoNombre"></span>
             <button id="clienteQuitar" type="button" title="Quitar cliente">✕</button>
           </div>
+          <button id="btnVerTopCliente" type="button" class="btn-link hidden">Ver productos más comprados</button>
           <button id="btnNuevoCliente" type="button" class="btn-link">+ Nuevo cliente</button>
         </div>
 
@@ -177,6 +178,20 @@
     <div class="modal-actions">
       <button id="modalItemCancelar" class="btn-secondary" type="button">Cancelar</button>
       <button id="modalItemAgregar" class="btn-primary" type="button">Agregar</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== MODAL: top productos rápido ===================== -->
+<div id="modalTop" class="modal hidden">
+  <div class="modal-box">
+    <h2 id="modalTopTitulo">Productos más comprados</h2>
+    <table class="items-table" id="modalTopTabla">
+      <thead><tr><th>Producto</th><th class="num">Cant. total</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="modal-actions">
+      <button id="modalTopCerrar" class="btn-secondary" type="button">Cerrar</button>
     </div>
   </div>
 </div>

@@ -97,11 +97,19 @@ function setupNuevoRemito() {
   document.getElementById("clienteQuitar").addEventListener("click", () => {
     clienteActual = null;
     document.getElementById("clienteSeleccionado").classList.add("hidden");
+    document.getElementById("btnVerTopCliente").classList.add("hidden");
     clienteInput.value = "";
     clienteInput.classList.remove("hidden");
   });
 
   document.getElementById("btnNuevoCliente").addEventListener("click", () => abrirModalCliente());
+
+  document.getElementById("btnVerTopCliente").addEventListener("click", () => {
+    if (clienteActual) mostrarTopProductos(clienteActual.id, clienteActual.nombre);
+  });
+  document.getElementById("modalTopCerrar").addEventListener("click", () => {
+    document.getElementById("modalTop").classList.add("hidden");
+  });
 
   // ---- Búsqueda de productos ----
   const prodInput = document.getElementById("productoBuscar");
@@ -169,6 +177,7 @@ function seleccionarCliente(c) {
   document.getElementById("clienteResultados").innerHTML = "";
   document.getElementById("clienteSeleccionadoNombre").textContent = c.nombre;
   document.getElementById("clienteSeleccionado").classList.remove("hidden");
+  document.getElementById("btnVerTopCliente").classList.remove("hidden");
 }
 
 function agregarItem(item) {
@@ -252,6 +261,7 @@ async function guardarRemito() {
   document.getElementById("btnImprimirRemito").disabled = false;
   document.getElementById("btnNuevoRemitoReset").classList.remove("hidden");
   window._ultimoRemito = { cliente: clienteActual, fecha, items: [...items], total };
+  cargarClientes();
 }
 
 function imprimirRemitoActual() {
@@ -280,6 +290,53 @@ function resetNuevoRemito() {
   document.getElementById("btnImprimirRemito").disabled = true;
   document.getElementById("nuevoRemitoMsg").textContent = "";
   renderItems();
+}
+
+// ===================================================================
+// TOP PRODUCTOS RÁPIDO (desde Nuevo remito, sin ir a la ficha)
+// ===================================================================
+async function mostrarTopProductos(clienteId, nombre) {
+  document.getElementById("modalTopTitulo").textContent = "Productos más comprados — " + nombre;
+  const tbody = document.querySelector("#modalTopTabla tbody");
+  tbody.innerHTML = `<tr><td colspan="2" class="empty-row">Cargando...</td></tr>`;
+  document.getElementById("modalTop").classList.remove("hidden");
+
+  const top = await calcularTopProductos(clienteId);
+  tbody.innerHTML = top.length
+    ? top.map(([n, cant]) => `<tr><td>${n}</td><td class="num">${cant}</td></tr>`).join("")
+    : `<tr><td colspan="2" class="empty-row">Sin compras registradas todavía</td></tr>`;
+}
+
+async function calcularTopProductos(clienteId) {
+  const { data: remitos, error } = await sb
+    .from("remitos")
+    .select("remito_items(descripcion, cantidad)")
+    .eq("cliente_id", clienteId);
+  if (error) { console.error(error); return []; }
+  const conteo = {};
+  remitos.forEach((r) => {
+    (r.remito_items || []).forEach((it) => {
+      conteo[it.descripcion] = (conteo[it.descripcion] || 0) + Number(it.cantidad);
+    });
+  });
+  return Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 8);
+}
+
+// ===================================================================
+// BORRAR REMITO
+// ===================================================================
+async function borrarRemito(remitoId, alTerminar) {
+  if (!confirm("¿Borrar este remito? No se puede deshacer.")) return;
+  const { error } = await sb.from("remitos").delete().eq("id", remitoId);
+  if (error) { alert("Error al borrar: " + error.message); return; }
+  if (alTerminar) alTerminar();
+}
+
+function diasDesde(fechaStr) {
+  if (!fechaStr) return null;
+  const hoy = new Date();
+  const fecha = new Date(fechaStr + "T00:00:00");
+  return Math.floor((hoy - fecha) / (1000 * 60 * 60 * 24));
 }
 
 // ===================================================================
@@ -341,9 +398,32 @@ function setupClientes() {
 }
 
 async function cargarClientes() {
-  const { data, error } = await sb.from("clientes").select("*").order("nombre");
+  const { data: clientes, error } = await sb.from("clientes").select("*").order("nombre");
   if (error) { console.error(error); return; }
-  clientesCache = data;
+
+  const { data: remitos, error: errRemitos } = await sb.from("remitos").select("cliente_id, fecha");
+  if (errRemitos) { console.error(errRemitos); }
+
+  const ultimaFechaPorCliente = {};
+  (remitos || []).forEach((r) => {
+    if (!ultimaFechaPorCliente[r.cliente_id] || r.fecha > ultimaFechaPorCliente[r.cliente_id]) {
+      ultimaFechaPorCliente[r.cliente_id] = r.fecha;
+    }
+  });
+
+  clientesCache = clientes.map((c) => ({
+    ...c,
+    _ultimaFecha: ultimaFechaPorCliente[c.id] || null,
+  }));
+
+  // Más recientes primero; sin compras, al final.
+  clientesCache.sort((a, b) => {
+    if (!a._ultimaFecha && !b._ultimaFecha) return a.nombre.localeCompare(b.nombre);
+    if (!a._ultimaFecha) return 1;
+    if (!b._ultimaFecha) return -1;
+    return b._ultimaFecha.localeCompare(a._ultimaFecha);
+  });
+
   renderClientesLista();
 }
 
@@ -355,7 +435,11 @@ function renderClientesLista() {
     .filter((c) => c.nombre.toLowerCase().includes(q))
     .forEach((c) => {
       const li = document.createElement("li");
-      li.textContent = c.nombre;
+      const dias = diasDesde(c._ultimaFecha);
+      const sub = c._ultimaFecha
+        ? `hace ${dias} día${dias === 1 ? "" : "s"}`
+        : "sin compras";
+      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${c.nombre}</div><div class="cliente-li-sub">${sub}</div>`;
       if (clienteFichaActual && clienteFichaActual.id === c.id) li.classList.add("active");
       li.addEventListener("click", () => abrirFichaCliente(c));
       lista.appendChild(li);
@@ -368,7 +452,7 @@ async function abrirFichaCliente(c) {
   document.getElementById("clienteFichaVacio").classList.add("hidden");
   document.getElementById("clienteFicha").classList.remove("hidden");
 
-  document.getElementById("fichaNombre").textContent = c.nombre;
+  document.getElementById("fichaNombre").textContent = `#${c.numero ?? "—"} ${c.nombre}`;
   document.getElementById("fichaTelefono").textContent = c.telefono || "—";
   document.getElementById("fichaDireccion").textContent = c.direccion || "—";
   document.getElementById("fichaNotas").textContent = c.notas || "—";
@@ -402,8 +486,14 @@ async function abrirFichaCliente(c) {
   // historial de remitos
   const histBody = document.querySelector("#fichaHistorial tbody");
   histBody.innerHTML = remitos.length
-    ? remitos.map((r) => `<tr><td>${r.fecha}</td><td class="num">${money(r.total)}</td><td></td></tr>`).join("")
+    ? remitos.map((r) => `<tr><td>${r.fecha}</td><td class="num">${money(r.total)}</td><td><button class="row-remove" data-id="${r.id}" title="Borrar remito">✕</button></td></tr>`).join("")
     : `<tr><td colspan="3" class="empty-row">Sin remitos todavía</td></tr>`;
+  histBody.querySelectorAll(".row-remove").forEach((btn) => {
+    btn.addEventListener("click", () => borrarRemito(btn.dataset.id, async () => {
+      await abrirFichaCliente(c);
+      await cargarClientes();
+    }));
+  });
 }
 
 // ===================================================================
@@ -430,6 +520,9 @@ async function cargarHistorial() {
 
   const body = document.getElementById("historialBody");
   body.innerHTML = filtrados.length
-    ? filtrados.map((r) => `<tr><td>${r.fecha}</td><td>${r.clientes?.nombre || "—"}</td><td class="num">${money(r.total)}</td><td></td></tr>`).join("")
+    ? filtrados.map((r) => `<tr><td>${r.fecha}</td><td>${r.clientes?.nombre || "—"}</td><td class="num">${money(r.total)}</td><td><button class="row-remove" data-id="${r.id}" title="Borrar remito">✕</button></td></tr>`).join("")
     : `<tr><td colspan="4" class="empty-row">No hay remitos todavía</td></tr>`;
+  body.querySelectorAll(".row-remove").forEach((btn) => {
+    btn.addEventListener("click", () => borrarRemito(btn.dataset.id, cargarHistorial));
+  });
 }
