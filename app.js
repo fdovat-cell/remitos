@@ -288,25 +288,8 @@ async function guardarRemito() {
   cargarClientes();
 }
 
-function imprimirRemitoActual(remito) {
-  const r = remito || window._ultimoRemito;
-  if (!r) return;
-  document.getElementById("printFecha").textContent = "Fecha: " + r.fecha;
-  document.getElementById("printCliente").textContent = "Cliente: " + r.cliente.nombre;
-  const body = document.getElementById("printBody");
-  body.innerHTML = "";
-  r.items.forEach((it) => {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${it.codigo || "—"}</td><td>${it.descripcion}</td><td>${it.cantidad}</td><td>${money(it.precio)}</td><td>${money(it.cantidad * it.precio)}</td>`;
-    body.appendChild(tr);
-  });
-  document.getElementById("printTotal").textContent = money(r.total);
-  window.print();
-}
-
-function descargarRemitoPDF(remito) {
-  const r = remito;
-  if (!r || !window.jspdf) return;
+// Construye el PDF del remito (usado tanto para imprimir como para descargar).
+function construirPDFRemito(r) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF();
 
@@ -346,6 +329,24 @@ function descargarRemitoPDF(remito) {
   doc.setFont(undefined, "bold");
   doc.text("Total: " + money(r.total), 196, y, { align: "right" });
 
+  return doc;
+}
+
+function imprimirRemitoActual(remito) {
+  const r = remito || window._ultimoRemito;
+  if (!r || !window.jspdf) return;
+  const doc = construirPDFRemito(r);
+  // Marca el PDF para que se abra directamente el diálogo de impresión
+  // (así no hace falta descargarlo primero, funciona igual en celular y PC).
+  doc.autoPrint();
+  const blobUrl = doc.output("bloburl");
+  window.open(blobUrl, "_blank");
+}
+
+function descargarRemitoPDF(remito) {
+  const r = remito;
+  if (!r || !window.jspdf) return;
+  const doc = construirPDFRemito(r);
   const nombreArchivo = `remito-${r.cliente.nombre.replace(/\s+/g, "_")}-${r.fecha}.pdf`;
   doc.save(nombreArchivo);
 }

@@ -261,23 +261,3 @@ input:focus, textarea:focus {
 .modal-box label input, .modal-box label textarea { margin-top: 4px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 
-/* ---------- Impresión ---------- */
-.print-area { display: none; }
-@media print {
-  body * { visibility: hidden; }
-  .print-area, .print-area * { visibility: visible; }
-  .print-area {
-    display: block;
-    position: absolute; top: 0; left: 0; width: 100%;
-    padding: 20px;
-  }
-  .print-area h1 { font-size: 1.3rem; margin: 0 0 4px; }
-  .print-fecha { color: #555; margin: 0 0 14px; }
-  .print-cliente { font-size: 1.05rem; font-weight: 600; margin: 0 0 16px; }
-  #printTable { width: 100%; border-collapse: collapse; }
-  #printTable th, #printTable td { border-bottom: 1px solid #ccc; padding: 6px 4px; text-align: left; font-size: 0.9rem; }
-  #printTable th:nth-child(3), #printTable td:nth-child(3),
-  #printTable th:nth-child(4), #printTable td:nth-child(4),
-  #printTable th:nth-child(5), #printTable td:nth-child(5) { text-align: right; }
-  .print-total { text-align: right; font-size: 1.05rem; margin-top: 14px; }
-}
