@@ -300,7 +300,13 @@ function construirPDFRemito(r) {
   doc.setFontSize(12);
   doc.text("Cliente: " + r.cliente.nombre, 14, 34);
 
-  let y = 46;
+  let y = 42;
+  if (r.cliente.direccion) {
+    doc.setFontSize(10);
+    doc.text("Dirección: " + r.cliente.direccion, 14, y);
+    y += 8;
+  }
+  y += 4;
   doc.setFontSize(9);
   doc.setFont(undefined, "bold");
   doc.text("Código", 14, y);
@@ -355,12 +361,12 @@ function descargarRemitoPDF(remito) {
 async function cargarRemitoCompleto(remitoId) {
   const { data, error } = await sb
     .from("remitos")
-    .select("id, fecha, total, clientes(nombre), remito_items(codigo, descripcion, cantidad, precio_unitario)")
+    .select("id, fecha, total, clientes(nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
     .eq("id", remitoId)
     .single();
   if (error) { alert("Error al cargar el remito: " + error.message); return null; }
   return {
-    cliente: { nombre: data.clientes?.nombre || "—" },
+    cliente: { nombre: data.clientes?.nombre || "—", direccion: data.clientes?.direccion || "" },
     fecha: data.fecha,
     total: data.total,
     items: (data.remito_items || []).map((it) => ({
