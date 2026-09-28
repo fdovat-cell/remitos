@@ -69,6 +69,10 @@ let modalItemEditandoModo = "manual";
 // ===================================================================
 document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("remitoFecha").value = new Date().toISOString().slice(0, 10);
+  // Los buscadores de cliente también buscan por dirección.
+  document.getElementById("clienteBuscar").placeholder = "Buscar cliente por nombre o dirección...";
+  document.getElementById("clientesFiltro").placeholder = "Filtrar por nombre o dirección...";
+  document.getElementById("historialFiltro").placeholder = "Filtrar por cliente o dirección...";
   setupTabs();
   setupNuevoRemito();
   setupClientes();
@@ -109,17 +113,20 @@ function setupNuevoRemito() {
   clienteInput.addEventListener("input", async () => {
     const q = clienteInput.value.trim();
     if (!q) { clienteResultados.innerHTML = ""; return; }
+    // Se quitan caracteres que rompen el filtro .or() de Supabase.
+    const safe = q.replace(/[,()%*]/g, " ").trim();
+    if (!safe) { clienteResultados.innerHTML = ""; return; }
     const { data, error } = await sb
       .from("clientes")
       .select("id, nombre, direccion")
-      .ilike("nombre", `%${q}%`)
+      .or(`nombre.ilike.%${safe}%,direccion.ilike.%${safe}%`)
       .limit(8);
     if (error) { console.error(error); return; }
     clienteResultados.innerHTML = "";
     data.forEach((c) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      div.innerHTML = `<span>${c.nombre}</span>`;
+      div.innerHTML = `<span>${c.nombre}${c.direccion ? ` <span class="item-code">${c.direccion}</span>` : ""}</span>`;
       div.addEventListener("click", () => seleccionarCliente(c));
       clienteResultados.appendChild(div);
     });
@@ -586,14 +593,14 @@ function renderClientesLista() {
   const lista = document.getElementById("clientesLista");
   lista.innerHTML = "";
   clientesCache
-    .filter((c) => c.nombre.toLowerCase().includes(q))
+    .filter((c) => c.nombre.toLowerCase().includes(q) || (c.direccion || "").toLowerCase().includes(q))
     .forEach((c) => {
       const li = document.createElement("li");
       const dias = diasDesde(c._ultimaFecha);
       const sub = c._ultimaFecha
         ? `hace ${dias} día${dias === 1 ? "" : "s"}`
         : "sin compras";
-      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${c.nombre}</div><div class="cliente-li-sub">${sub}</div>`;
+      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${c.nombre}</div><div class="cliente-li-sub">${sub}${c.direccion ? " · " + c.direccion : ""}</div>`;
       if (clienteFichaActual && clienteFichaActual.id === c.id) li.classList.add("active");
       li.addEventListener("click", () => abrirFichaCliente(c));
       lista.appendChild(li);
@@ -672,7 +679,7 @@ async function cargarHistorial() {
   const q = document.getElementById("historialFiltro").value.trim();
   let query = sb
     .from("remitos")
-    .select("id, fecha, total, clientes(nombre)")
+    .select("id, fecha, total, clientes(nombre, direccion)")
     .order("fecha", { ascending: false })
     .limit(200);
 
@@ -680,7 +687,11 @@ async function cargarHistorial() {
   if (error) { console.error(error); return; }
 
   const filtrados = q
-    ? data.filter((r) => r.clientes?.nombre?.toLowerCase().includes(q.toLowerCase()))
+    ? data.filter((r) => {
+        const t = q.toLowerCase();
+        return (r.clientes?.nombre || "").toLowerCase().includes(t) ||
+               (r.clientes?.direccion || "").toLowerCase().includes(t);
+      })
     : data;
 
   const body = document.getElementById("historialBody");
