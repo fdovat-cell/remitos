@@ -80,7 +80,7 @@ function setupNuevoRemito() {
     if (!q) { clienteResultados.innerHTML = ""; return; }
     const { data, error } = await sb
       .from("clientes")
-      .select("id, nombre")
+      .select("id, nombre, direccion")
       .ilike("nombre", `%${q}%`)
       .limit(8);
     if (error) { console.error(error); return; }
@@ -165,7 +165,9 @@ function setupNuevoRemito() {
 
   // ---- Guardar / imprimir ----
   document.getElementById("btnGuardarRemito").addEventListener("click", guardarRemito);
-  document.getElementById("btnImprimirRemito").addEventListener("click", imprimirRemitoActual);
+  // OJO: se envuelve en una función flecha para NO pasarle el evento del click
+  // como si fuera un remito (ese era el error que impedía imprimir).
+  document.getElementById("btnImprimirRemito").addEventListener("click", () => imprimirRemitoActual());
   document.getElementById("btnDescargarRemito").addEventListener("click", () => {
     if (window._ultimoRemito) descargarRemitoPDF(window._ultimoRemito);
   });
@@ -284,7 +286,7 @@ async function guardarRemito() {
   document.getElementById("btnImprimirRemito").disabled = false;
   document.getElementById("btnDescargarRemito").disabled = false;
   document.getElementById("btnNuevoRemitoReset").classList.remove("hidden");
-  window._ultimoRemito = { cliente: clienteActual, fecha, items: [...items], total };
+  window._ultimoRemito = { cliente: clienteActual, fecha, items: items.map((it) => ({ ...it })), total };
   cargarClientes();
 }
 
@@ -338,15 +340,23 @@ function construirPDFRemito(r) {
   return doc;
 }
 
-function imprimirRemitoActual(remito) {
+// Abre el PDF con el diálogo de impresión, sin descargarlo.
+// `ventana` (opcional) es una pestaña ya abierta por un click del usuario,
+// necesaria cuando hubo un "await" antes (para que el navegador no la bloquee).
+function imprimirRemitoActual(remito, ventana) {
   const r = remito || window._ultimoRemito;
-  if (!r || !window.jspdf) return;
+  if (!r || !window.jspdf) {
+    if (ventana && !ventana.closed) ventana.close();
+    return;
+  }
   const doc = construirPDFRemito(r);
-  // Marca el PDF para que se abra directamente el diálogo de impresión
-  // (así no hace falta descargarlo primero, funciona igual en celular y PC).
   doc.autoPrint();
   const blobUrl = doc.output("bloburl");
-  window.open(blobUrl, "_blank");
+  if (ventana && !ventana.closed) {
+    ventana.location.href = blobUrl;
+  } else {
+    window.open(blobUrl, "_blank");
+  }
 }
 
 function descargarRemitoPDF(remito) {
@@ -379,8 +389,11 @@ async function cargarRemitoCompleto(remitoId) {
 }
 
 async function reimprimirRemito(remitoId) {
+  // Se abre la pestaña ya, dentro del click, para que el navegador no la bloquee.
+  const ventana = window.open("", "_blank");
   const r = await cargarRemitoCompleto(remitoId);
-  if (r) imprimirRemitoActual(r);
+  if (r) imprimirRemitoActual(r, ventana);
+  else if (ventana) ventana.close();
 }
 
 async function redescargarRemito(remitoId) {
