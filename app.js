@@ -18,8 +18,8 @@ const norm = (t) =>
   String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 
 // data.json: { brands: [...], products: { marcaId: [ {name, art, unit, caja, present, activo} ] } }
-// Cada producto activo genera una opción por unidad y, si la caja tiene otro
-// precio, otra opción por caja.
+// Igual que en la distribuidora: si venta === 1 se vende por unidad (precio
+// "unit"); en cualquier otro caso se vende por caja/pack (precio "caja").
 function construirProductos(data) {
   const marcas = {};
   const inactivas = new Set();
@@ -38,19 +38,15 @@ function construirProductos(data) {
       const caja = Number(p.caja) || 0;
       const present = p.present || "";
       const codigo = String(p.art || "");
+      const porUnidad = p.venta === 1;
 
       lista.push({
-        codigo, marca, present, tipo: "unidad",
-        nombre: p.name, descripcion: p.name, precio: unit,
+        codigo, marca, present,
+        tipo: porUnidad ? "unidad" : "caja",
+        nombre: p.name,
+        descripcion: porUnidad ? p.name : (present ? `${p.name} (${present})` : p.name),
+        precio: porUnidad ? unit : caja,
       });
-      if (caja > 0 && caja !== unit) {
-        lista.push({
-          codigo, marca, present, tipo: "caja",
-          nombre: p.name,
-          descripcion: present ? `${p.name} (Caja: ${present})` : `${p.name} (Caja)`,
-          precio: caja,
-        });
-      }
     });
   });
 
