@@ -7,20 +7,55 @@ const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANO
 const money = (n) =>
   "$" + Number(n || 0).toLocaleString("es-UY", { maximumFractionDigits: 2 });
 
-// Intenta varios nombres de campo posibles, por si productos.json usa
-// otra convención (verificar contra el archivo real de buscador-v2).
-function pick(obj, names, fallback = "") {
-  for (const n of names) {
-    if (obj[n] !== undefined && obj[n] !== null && obj[n] !== "") return obj[n];
-  }
-  return fallback;
-}
-function productoCampos(p) {
-  return {
-    codigo: String(pick(p, ["codigo", "código", "id", "code"])),
-    nombre: String(pick(p, ["nombre", "descripcion", "descripción", "name", "producto"])),
-    precio: Number(pick(p, ["precio", "price"], 0)),
-  };
+// Catálogo: mismo data.json que usa pelsas-distribuidora (así los precios y
+// los productos nuevos son siempre los mismos en las dos apps).
+// raw.githubusercontent.com permite leerlo desde otro dominio y se actualiza
+// a los pocos minutos de guardar un cambio en la distribuidora.
+const CATALOGO_URL =
+  "https://raw.githubusercontent.com/fdovat-cell/pelsas-distribuidora/refs/heads/main/data.json";
+
+const norm = (t) =>
+  String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+// data.json: { brands: [...], products: { marcaId: [ {name, art, unit, caja, present, activo} ] } }
+// Cada producto activo genera una opción por unidad y, si la caja tiene otro
+// precio, otra opción por caja.
+function construirProductos(data) {
+  const marcas = {};
+  const inactivas = new Set();
+  (data.brands || []).forEach((b) => {
+    marcas[b.id] = b.name;
+    if (b.activo === false) inactivas.add(b.id);
+  });
+
+  const lista = [];
+  Object.entries(data.products || {}).forEach(([marcaId, arr]) => {
+    if (!Array.isArray(arr) || inactivas.has(marcaId)) return;
+    const marca = marcas[marcaId] || marcaId;
+    arr.forEach((p) => {
+      if (p.activo === false || !p.name) return;
+      const unit = Number(p.unit) || 0;
+      const caja = Number(p.caja) || 0;
+      const present = p.present || "";
+      const codigo = String(p.art || "");
+
+      lista.push({
+        codigo, marca, present, tipo: "unidad",
+        nombre: p.name, descripcion: p.name, precio: unit,
+      });
+      if (caja > 0 && caja !== unit) {
+        lista.push({
+          codigo, marca, present, tipo: "caja",
+          nombre: p.name,
+          descripcion: present ? `${p.name} (Caja: ${present})` : `${p.name} (Caja)`,
+          precio: caja,
+        });
+      }
+    });
+  });
+
+  lista.forEach((p) => { p._q = norm(`${p.nombre} ${p.codigo} ${p.marca}`); });
+  return lista;
 }
 
 // ===================================================================
@@ -60,9 +95,9 @@ function setupTabs() {
 
 async function cargarProductos() {
   try {
-    const res = await fetch(CONFIG.PRODUCTOS_JSON_URL);
-    const data = await res.json();
-    productos = (Array.isArray(data) ? data : data.productos || []).map(productoCampos);
+    const res = await fetch(CATALOGO_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    productos = construirProductos(await res.json());
   } catch (e) {
     console.error("No se pudo cargar el catálogo de productos:", e);
   }
@@ -116,18 +151,19 @@ function setupNuevoRemito() {
   const prodResultados = document.getElementById("productoResultados");
 
   prodInput.addEventListener("input", () => {
-    const q = prodInput.value.trim().toLowerCase();
+    const terms = norm(prodInput.value.trim()).split(/\s+/).filter(Boolean);
     prodResultados.innerHTML = "";
-    if (!q) return;
+    if (!terms.length) return;
     const matches = productos
-      .filter((p) => p.codigo.toLowerCase().includes(q) || p.nombre.toLowerCase().includes(q))
-      .slice(0, 10);
+      .filter((p) => terms.every((t) => p._q.includes(t)))
+      .slice(0, 12);
     matches.forEach((p) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      div.innerHTML = `<span>${p.nombre} <span class="item-code">${p.codigo}</span></span><span class="item-price">${money(p.precio)}</span>`;
+      const detalle = [p.codigo, p.present].filter(Boolean).join(" · ");
+      div.innerHTML = `<span>${p.nombre}${p.tipo === "caja" ? " <strong>(caja)</strong>" : ""} <span class="item-code">${detalle}</span></span><span class="item-price">${money(p.precio)}</span>`;
       div.addEventListener("click", () => {
-        agregarItem({ codigo: p.codigo, descripcion: p.nombre, cantidad: 1, precio: p.precio });
+        agregarItem({ codigo: p.codigo, descripcion: p.descripcion, cantidad: 1, precio: p.precio });
         prodInput.value = "";
         prodResultados.innerHTML = "";
         prodInput.focus();
