@@ -86,7 +86,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 20px; }
 .card-header-row h2 { margin: 0; }
 
 /* ---------- Inputs ---------- */
-input[type="text"], input[type="number"], input[type="date"], textarea {
+input[type="text"], input[type="number"], input[type="date"], textarea, select {
   width: 100%;
   padding: 9px 11px;
   border: 1px solid var(--line);
@@ -96,7 +96,7 @@ input[type="text"], input[type="number"], input[type="date"], textarea {
   background: #fff;
   color: var(--ink);
 }
-input:focus, textarea:focus {
+input:focus, textarea:focus, select:focus {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -261,3 +261,7 @@ input:focus, textarea:focus {
 .modal-box label input, .modal-box label textarea { margin-top: 4px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
 
+
+/* ---------- Impresión de lista de clientes ---------- */
+.lista-imprimir { display: flex; gap: 8px; margin: 10px 0 12px; }
+.lista-imprimir select { flex: 1; width: auto; }

@@ -553,6 +553,9 @@ function setupModalCliente() {
 function setupClientes() {
   setupModalCliente();
   document.getElementById("clientesFiltro").addEventListener("input", renderClientesLista);
+  document.getElementById("btnImprimirLista").addEventListener("click", () => {
+    imprimirListaClientes(document.getElementById("listaOrden").value);
+  });
   document.getElementById("btnEditarCliente").addEventListener("click", () => {
     if (clienteFichaActual) abrirModalCliente(clienteFichaActual);
   });
@@ -605,6 +608,101 @@ function renderClientesLista() {
       li.addEventListener("click", () => abrirFichaCliente(c));
       lista.appendChild(li);
     });
+}
+
+// ===================================================================
+// IMPRIMIR LISTA DE CLIENTES (alfabética / por dirección / por última venta)
+// ===================================================================
+const ORDENES_LISTA = {
+  alfa: "Orden alfabético",
+  direccion: "Orden por dirección",
+  ultima: "Orden por última venta (más reciente primero)",
+};
+
+function fechaCorta(f) {
+  if (!f) return "-";
+  const [y, m, d] = f.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function ordenarClientesParaLista(orden) {
+  const porNombre = (a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" });
+  const lista = [...clientesCache];
+  if (orden === "direccion") {
+    lista.sort((a, b) => {
+      const da = (a.direccion || "").trim();
+      const db = (b.direccion || "").trim();
+      if (!da && !db) return porNombre(a, b);
+      if (!da) return 1;
+      if (!db) return -1;
+      return da.localeCompare(db, "es", { sensitivity: "base", numeric: true }) || porNombre(a, b);
+    });
+  } else if (orden === "ultima") {
+    lista.sort((a, b) => {
+      if (!a._ultimaFecha && !b._ultimaFecha) return porNombre(a, b);
+      if (!a._ultimaFecha) return 1;
+      if (!b._ultimaFecha) return -1;
+      return b._ultimaFecha.localeCompare(a._ultimaFecha) || porNombre(a, b);
+    });
+  } else {
+    lista.sort(porNombre);
+  }
+  return lista;
+}
+
+function construirPDFListaClientes(orden) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const clientes = ordenarClientesParaLista(orden);
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const X = { num: 14, nombre: 26, dir: 84, tel: 150, fecha: 196 };
+  const encabezado = (y) => {
+    doc.setFontSize(9);
+    doc.setFont(undefined, "bold");
+    doc.text("#", X.num, y);
+    doc.text("Cliente", X.nombre, y);
+    doc.text("Dirección", X.dir, y);
+    doc.text("Teléfono", X.tel, y);
+    doc.text("Últ. compra", X.fecha, y, { align: "right" });
+    doc.setFont(undefined, "normal");
+    doc.line(14, y + 2, 196, y + 2);
+    return y + 8;
+  };
+
+  doc.setFontSize(16);
+  doc.text("Lista de clientes", 14, 18);
+  doc.setFontSize(10);
+  doc.text(`${ORDENES_LISTA[orden] || ORDENES_LISTA.alfa} - ${clientes.length} clientes - ${fechaCorta(hoy)}`, 14, 25);
+
+  let y = encabezado(34);
+  doc.setFontSize(9);
+  clientes.forEach((c) => {
+    const nombreL = doc.splitTextToSize(String(c.nombre || ""), 54);
+    const dirL = doc.splitTextToSize(String(c.direccion || "-"), 62);
+    const alto = Math.max(nombreL.length, dirL.length) * 4.5 + 2.5;
+    if (y + alto > 285) {
+      doc.addPage();
+      y = encabezado(20);
+      doc.setFontSize(9);
+    }
+    doc.text(String(c.numero ?? "-"), X.num, y);
+    doc.text(nombreL, X.nombre, y);
+    doc.text(dirL, X.dir, y);
+    doc.text(String(c.telefono || "-"), X.tel, y);
+    doc.text(fechaCorta(c._ultimaFecha), X.fecha, y, { align: "right" });
+    y += alto;
+  });
+
+  return doc;
+}
+
+function imprimirListaClientes(orden) {
+  if (!window.jspdf) return;
+  if (!clientesCache.length) { alert("Todavía no hay clientes para imprimir."); return; }
+  const doc = construirPDFListaClientes(orden);
+  doc.autoPrint();
+  window.open(doc.output("bloburl"), "_blank");
 }
 
 async function abrirFichaCliente(c) {
