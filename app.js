@@ -616,7 +616,7 @@ function renderClientesLista() {
 const ORDENES_LISTA = {
   alfa: "Orden alfabético",
   direccion: "Orden por dirección",
-  ultima: "Orden por última venta (más reciente primero)",
+  ultima: "Orden por última venta (más antigua primero)",
 };
 
 function fechaCorta(f) {
@@ -642,7 +642,7 @@ function ordenarClientesParaLista(orden) {
       if (!a._ultimaFecha && !b._ultimaFecha) return porNombre(a, b);
       if (!a._ultimaFecha) return 1;
       if (!b._ultimaFecha) return -1;
-      return b._ultimaFecha.localeCompare(a._ultimaFecha) || porNombre(a, b);
+      return a._ultimaFecha.localeCompare(b._ultimaFecha) || porNombre(a, b);
     });
   } else {
     lista.sort(porNombre);
