@@ -7,72 +7,38 @@ const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANO
 const money = (n) =>
   "$" + Number(n || 0).toLocaleString("es-UY", { maximumFractionDigits: 2 });
 
-// Catálogo: mismo data.json que usa pelsas-distribuidora (así los precios y
-// los productos nuevos son siempre los mismos en las dos apps).
-// raw.githubusercontent.com permite leerlo desde otro dominio y se actualiza
-// a los pocos minutos de guardar un cambio en la distribuidora.
-const CATALOGO_URL =
-  "https://raw.githubusercontent.com/fdovat-cell/pelsas-distribuidora/refs/heads/main/data.json";
-
-const norm = (t) =>
-  String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-
-// data.json: { brands: [...], products: { marcaId: [ {name, art, unit, caja, present, activo} ] } }
-// Igual que en la distribuidora: si venta === 1 se vende por unidad (precio
-// "unit"); en cualquier otro caso se vende por caja/pack (precio "caja").
-function construirProductos(data) {
-  const marcas = {};
-  const inactivas = new Set();
-  (data.brands || []).forEach((b) => {
-    marcas[b.id] = b.name;
-    if (b.activo === false) inactivas.add(b.id);
-  });
-
-  const lista = [];
-  Object.entries(data.products || {}).forEach(([marcaId, arr]) => {
-    if (!Array.isArray(arr) || inactivas.has(marcaId)) return;
-    const marca = marcas[marcaId] || marcaId;
-    arr.forEach((p) => {
-      if (p.activo === false || !p.name) return;
-      const unit = Number(p.unit) || 0;
-      const caja = Number(p.caja) || 0;
-      const present = p.present || "";
-      const codigo = String(p.art || "");
-      const porUnidad = p.venta === 1;
-
-      lista.push({
-        codigo, marca, present,
-        tipo: porUnidad ? "unidad" : "caja",
-        nombre: p.name,
-        descripcion: porUnidad ? p.name : (present ? `${p.name} (${present})` : p.name),
-        precio: porUnidad ? unit : caja,
-      });
-    });
-  });
-
-  lista.forEach((p) => { p._q = norm(`${p.nombre} ${p.codigo} ${p.marca}`); });
-  return lista;
+// Intenta varios nombres de campo posibles, por si productos.json usa
+// otra convención (verificar contra el archivo real de buscador-v2).
+function pick(obj, names, fallback = "") {
+  for (const n of names) {
+    if (obj[n] !== undefined && obj[n] !== null && obj[n] !== "") return obj[n];
+  }
+  return fallback;
+}
+function productoCampos(p) {
+  return {
+    codigo: String(pick(p, ["codigo", "código", "id", "code"])),
+    nombre: String(pick(p, ["nombre", "descripcion", "descripción", "name", "producto"])),
+    precio: Number(pick(p, ["precio", "price"], 0)),
+  };
 }
 
 // ===================================================================
 // Estado
 // ===================================================================
 let productos = [];        // catálogo de buscador-v2
-let clienteActual = null;  // {id, nombre, ...}
+let clienteActual = null;  // {id, nombre, direccion, ...}
 let items = [];            // items del remito en edición
 let clientesCache = [];
 let clienteFichaActual = null;
 let modalItemEditandoModo = "manual";
+let editandoRemitoId = null; // id del remito guardado que se está editando (null = remito nuevo)
 
 // ===================================================================
 // Init
 // ===================================================================
 document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("remitoFecha").value = new Date().toISOString().slice(0, 10);
-  // Los buscadores de cliente también buscan por dirección.
-  document.getElementById("clienteBuscar").placeholder = "Buscar cliente por nombre o dirección...";
-  document.getElementById("clientesFiltro").placeholder = "Filtrar por nombre o dirección...";
-  document.getElementById("historialFiltro").placeholder = "Filtrar por cliente o dirección...";
   setupTabs();
   setupNuevoRemito();
   setupClientes();
@@ -95,9 +61,9 @@ function setupTabs() {
 
 async function cargarProductos() {
   try {
-    const res = await fetch(CATALOGO_URL, { cache: "no-store" });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    productos = construirProductos(await res.json());
+    const res = await fetch(CONFIG.PRODUCTOS_JSON_URL);
+    const data = await res.json();
+    productos = (Array.isArray(data) ? data : data.productos || []).map(productoCampos);
   } catch (e) {
     console.error("No se pudo cargar el catálogo de productos:", e);
   }
@@ -113,20 +79,17 @@ function setupNuevoRemito() {
   clienteInput.addEventListener("input", async () => {
     const q = clienteInput.value.trim();
     if (!q) { clienteResultados.innerHTML = ""; return; }
-    // Se quitan caracteres que rompen el filtro .or() de Supabase.
-    const safe = q.replace(/[,()%*]/g, " ").trim();
-    if (!safe) { clienteResultados.innerHTML = ""; return; }
     const { data, error } = await sb
       .from("clientes")
       .select("id, nombre, direccion")
-      .or(`nombre.ilike.%${safe}%,direccion.ilike.%${safe}%`)
+      .ilike("nombre", `%${q}%`)
       .limit(8);
     if (error) { console.error(error); return; }
     clienteResultados.innerHTML = "";
     data.forEach((c) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      div.innerHTML = `<span>${c.nombre}${c.direccion ? ` <span class="item-code">${c.direccion}</span>` : ""}</span>`;
+      div.innerHTML = `<span>${c.nombre}</span>`;
       div.addEventListener("click", () => seleccionarCliente(c));
       clienteResultados.appendChild(div);
     });
@@ -154,19 +117,18 @@ function setupNuevoRemito() {
   const prodResultados = document.getElementById("productoResultados");
 
   prodInput.addEventListener("input", () => {
-    const terms = norm(prodInput.value.trim()).split(/\s+/).filter(Boolean);
+    const q = prodInput.value.trim().toLowerCase();
     prodResultados.innerHTML = "";
-    if (!terms.length) return;
+    if (!q) return;
     const matches = productos
-      .filter((p) => terms.every((t) => p._q.includes(t)))
-      .slice(0, 12);
+      .filter((p) => p.codigo.toLowerCase().includes(q) || p.nombre.toLowerCase().includes(q))
+      .slice(0, 10);
     matches.forEach((p) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      const detalle = [p.codigo, p.present].filter(Boolean).join(" · ");
-      div.innerHTML = `<span>${p.nombre}${p.tipo === "caja" ? " <strong>(caja)</strong>" : ""} <span class="item-code">${detalle}</span></span><span class="item-price">${money(p.precio)}</span>`;
+      div.innerHTML = `<span>${p.nombre} <span class="item-code">${p.codigo}</span></span><span class="item-price">${money(p.precio)}</span>`;
       div.addEventListener("click", () => {
-        agregarItem({ codigo: p.codigo, descripcion: p.descripcion, cantidad: 1, precio: p.precio });
+        agregarItem({ codigo: p.codigo, descripcion: p.nombre, cantidad: 1, precio: p.precio });
         prodInput.value = "";
         prodResultados.innerHTML = "";
         prodInput.focus();
@@ -204,8 +166,6 @@ function setupNuevoRemito() {
 
   // ---- Guardar / imprimir ----
   document.getElementById("btnGuardarRemito").addEventListener("click", guardarRemito);
-  // OJO: se envuelve en una función flecha para NO pasarle el evento del click
-  // como si fuera un remito (ese era el error que impedía imprimir).
   document.getElementById("btnImprimirRemito").addEventListener("click", () => imprimirRemitoActual());
   document.getElementById("btnDescargarRemito").addEventListener("click", () => {
     if (window._ultimoRemito) descargarRemitoPDF(window._ultimoRemito);
@@ -289,6 +249,15 @@ function renderItems() {
   document.getElementById("remitoTotal").textContent = money(total);
 }
 
+function actualizarBotonGuardar() {
+  document.getElementById("btnGuardarRemito").textContent = editandoRemitoId
+    ? "Guardar cambios"
+    : "Guardar remito";
+}
+
+// Guarda un remito nuevo, o los cambios de un remito ya guardado.
+// Para editar: se guarda la versión nueva y recién después se borra la anterior,
+// así nunca se pierde el remito si algo falla a mitad de camino.
 async function guardarRemito() {
   const msg = document.getElementById("nuevoRemitoMsg");
   msg.textContent = "";
@@ -299,6 +268,7 @@ async function guardarRemito() {
 
   const fecha = document.getElementById("remitoFecha").value;
   const total = items.reduce((s, it) => s + it.cantidad * it.precio, 0);
+  const idAnterior = editandoRemitoId;
 
   const { data: remito, error: errRemito } = await sb
     .from("remitos")
@@ -318,10 +288,28 @@ async function guardarRemito() {
   }));
   const { error: errItems } = await sb.from("remito_items").insert(filas);
 
-  if (errItems) { msg.textContent = "Remito creado, pero hubo un error guardando los ítems: " + errItems.message; msg.className = "msg error"; return; }
+  if (errItems) {
+    // Deshace el remito recién creado para no dejar uno vacío.
+    await sb.from("remitos").delete().eq("id", remito.id);
+    msg.textContent = "Error guardando los ítems, no se guardó nada: " + errItems.message;
+    msg.className = "msg error";
+    return;
+  }
 
-  msg.textContent = "Remito guardado.";
-  msg.className = "msg ok";
+  let avisoDuplicado = "";
+  if (idAnterior) {
+    const { error: errDel } = await sb.from("remitos").delete().eq("id", idAnterior);
+    if (errDel) {
+      avisoDuplicado = " Ojo: no se pudo borrar la versión anterior, borrala a mano desde Historial (" + errDel.message + ").";
+    }
+  }
+
+  // Desde acá, guardar de nuevo reemplaza este remito en vez de duplicarlo.
+  editandoRemitoId = remito.id;
+  actualizarBotonGuardar();
+
+  msg.textContent = (idAnterior ? "Cambios guardados." : "Remito guardado.") + avisoDuplicado;
+  msg.className = avisoDuplicado ? "msg error" : "msg ok";
   document.getElementById("btnImprimirRemito").disabled = false;
   document.getElementById("btnDescargarRemito").disabled = false;
   document.getElementById("btnNuevoRemitoReset").classList.remove("hidden");
@@ -379,23 +367,15 @@ function construirPDFRemito(r) {
   return doc;
 }
 
-// Abre el PDF con el diálogo de impresión, sin descargarlo.
-// `ventana` (opcional) es una pestaña ya abierta por un click del usuario,
-// necesaria cuando hubo un "await" antes (para que el navegador no la bloquee).
-function imprimirRemitoActual(remito, ventana) {
+function imprimirRemitoActual(remito) {
   const r = remito || window._ultimoRemito;
-  if (!r || !window.jspdf) {
-    if (ventana && !ventana.closed) ventana.close();
-    return;
-  }
+  if (!r || !window.jspdf) return;
   const doc = construirPDFRemito(r);
+  // Marca el PDF para que se abra directamente el diálogo de impresión
+  // (así no hace falta descargarlo primero, funciona igual en celular y PC).
   doc.autoPrint();
   const blobUrl = doc.output("bloburl");
-  if (ventana && !ventana.closed) {
-    ventana.location.href = blobUrl;
-  } else {
-    window.open(blobUrl, "_blank");
-  }
+  window.open(blobUrl, "_blank");
 }
 
 function descargarRemitoPDF(remito) {
@@ -406,33 +386,35 @@ function descargarRemitoPDF(remito) {
   doc.save(nombreArchivo);
 }
 
-// Trae un remito ya guardado (con cliente e ítems) para reimprimir o descargar.
+// Trae un remito ya guardado (con cliente e ítems) para reimprimir, descargar o editar.
 async function cargarRemitoCompleto(remitoId) {
   const { data, error } = await sb
     .from("remitos")
-    .select("id, fecha, total, clientes(nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
+    .select("id, fecha, total, cliente_id, clientes(id, nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
     .eq("id", remitoId)
     .single();
   if (error) { alert("Error al cargar el remito: " + error.message); return null; }
   return {
-    cliente: { nombre: data.clientes?.nombre || "—", direccion: data.clientes?.direccion || "" },
+    id: data.id,
+    cliente: {
+      id: data.cliente_id,
+      nombre: data.clientes?.nombre || "—",
+      direccion: data.clientes?.direccion || "",
+    },
     fecha: data.fecha,
     total: data.total,
     items: (data.remito_items || []).map((it) => ({
       codigo: it.codigo,
       descripcion: it.descripcion,
-      cantidad: it.cantidad,
-      precio: it.precio_unitario,
+      cantidad: Number(it.cantidad),
+      precio: Number(it.precio_unitario),
     })),
   };
 }
 
 async function reimprimirRemito(remitoId) {
-  // Se abre la pestaña ya, dentro del click, para que el navegador no la bloquee.
-  const ventana = window.open("", "_blank");
   const r = await cargarRemitoCompleto(remitoId);
-  if (r) imprimirRemitoActual(r, ventana);
-  else if (ventana) ventana.close();
+  if (r) imprimirRemitoActual(r);
 }
 
 async function redescargarRemito(remitoId) {
@@ -440,10 +422,40 @@ async function redescargarRemito(remitoId) {
   if (r) descargarRemitoPDF(r);
 }
 
+// Carga un remito guardado en la pestaña "Nuevo remito" para modificarlo.
+async function editarRemito(remitoId) {
+  // Si hay un remito armado sin guardar, confirmar antes de pisarlo.
+  const hayTrabajoSinGuardar = items.length > 0 && document.getElementById("btnImprimirRemito").disabled;
+  if (hayTrabajoSinGuardar && !confirm("Tenés un remito sin guardar en la pestaña Nuevo remito. ¿Descartarlo y editar este?")) return;
+
+  const r = await cargarRemitoCompleto(remitoId);
+  if (!r) return;
+
+  resetNuevoRemito();
+  editandoRemitoId = r.id;
+  actualizarBotonGuardar();
+
+  seleccionarCliente(r.cliente);
+  document.getElementById("remitoFecha").value = r.fecha;
+  items = r.items;
+  renderItems();
+
+  const msg = document.getElementById("nuevoRemitoMsg");
+  msg.textContent = `Editando remito de ${r.cliente.nombre} (${r.fecha}). Hacé los cambios y tocá "Guardar cambios".`;
+  msg.className = "msg";
+  // "Empezar remito nuevo" funciona como cancelar la edición.
+  document.getElementById("btnNuevoRemitoReset").classList.remove("hidden");
+
+  document.querySelector('.tab-btn[data-tab="nuevo"]').click();
+}
+
 function resetNuevoRemito() {
   clienteActual = null;
   items = [];
+  editandoRemitoId = null;
+  actualizarBotonGuardar();
   document.getElementById("clienteSeleccionado").classList.add("hidden");
+  document.getElementById("btnVerTopCliente").classList.add("hidden");
   document.getElementById("clienteBuscar").classList.remove("hidden");
   document.getElementById("clienteBuscar").value = "";
   document.getElementById("remitoFecha").value = new Date().toISOString().slice(0, 10);
@@ -490,6 +502,11 @@ async function borrarRemito(remitoId, alTerminar) {
   if (!confirm("¿Borrar este remito? No se puede deshacer.")) return;
   const { error } = await sb.from("remitos").delete().eq("id", remitoId);
   if (error) { alert("Error al borrar: " + error.message); return; }
+  // Si justo se estaba editando ese remito, salir del modo edición.
+  if (editandoRemitoId === remitoId) {
+    resetNuevoRemito();
+    document.getElementById("btnNuevoRemitoReset").classList.add("hidden");
+  }
   if (alTerminar) alTerminar();
 }
 
@@ -553,9 +570,6 @@ function setupModalCliente() {
 function setupClientes() {
   setupModalCliente();
   document.getElementById("clientesFiltro").addEventListener("input", renderClientesLista);
-  document.getElementById("btnImprimirLista").addEventListener("click", () => {
-    imprimirListaClientes(document.getElementById("listaOrden").value);
-  });
   document.getElementById("btnEditarCliente").addEventListener("click", () => {
     if (clienteFichaActual) abrirModalCliente(clienteFichaActual);
   });
@@ -596,113 +610,18 @@ function renderClientesLista() {
   const lista = document.getElementById("clientesLista");
   lista.innerHTML = "";
   clientesCache
-    .filter((c) => c.nombre.toLowerCase().includes(q) || (c.direccion || "").toLowerCase().includes(q))
+    .filter((c) => c.nombre.toLowerCase().includes(q))
     .forEach((c) => {
       const li = document.createElement("li");
       const dias = diasDesde(c._ultimaFecha);
       const sub = c._ultimaFecha
         ? `hace ${dias} día${dias === 1 ? "" : "s"}`
         : "sin compras";
-      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${c.nombre}</div><div class="cliente-li-sub">${sub}${c.direccion ? " · " + c.direccion : ""}</div>`;
+      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${c.nombre}</div><div class="cliente-li-sub">${sub}</div>`;
       if (clienteFichaActual && clienteFichaActual.id === c.id) li.classList.add("active");
       li.addEventListener("click", () => abrirFichaCliente(c));
       lista.appendChild(li);
     });
-}
-
-// ===================================================================
-// IMPRIMIR LISTA DE CLIENTES (alfabética / por dirección / por última venta)
-// ===================================================================
-const ORDENES_LISTA = {
-  alfa: "Orden alfabético",
-  direccion: "Orden por dirección",
-  ultima: "Orden por última venta (más antigua primero)",
-};
-
-function fechaCorta(f) {
-  if (!f) return "-";
-  const [y, m, d] = f.split("-");
-  return `${d}/${m}/${y}`;
-}
-
-function ordenarClientesParaLista(orden) {
-  const porNombre = (a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" });
-  const lista = [...clientesCache];
-  if (orden === "direccion") {
-    lista.sort((a, b) => {
-      const da = (a.direccion || "").trim();
-      const db = (b.direccion || "").trim();
-      if (!da && !db) return porNombre(a, b);
-      if (!da) return 1;
-      if (!db) return -1;
-      return da.localeCompare(db, "es", { sensitivity: "base", numeric: true }) || porNombre(a, b);
-    });
-  } else if (orden === "ultima") {
-    lista.sort((a, b) => {
-      if (!a._ultimaFecha && !b._ultimaFecha) return porNombre(a, b);
-      if (!a._ultimaFecha) return 1;
-      if (!b._ultimaFecha) return -1;
-      return a._ultimaFecha.localeCompare(b._ultimaFecha) || porNombre(a, b);
-    });
-  } else {
-    lista.sort(porNombre);
-  }
-  return lista;
-}
-
-function construirPDFListaClientes(orden) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const clientes = ordenarClientesParaLista(orden);
-  const hoy = new Date().toISOString().slice(0, 10);
-
-  const X = { num: 14, nombre: 26, dir: 84, tel: 150, fecha: 196 };
-  const encabezado = (y) => {
-    doc.setFontSize(9);
-    doc.setFont(undefined, "bold");
-    doc.text("#", X.num, y);
-    doc.text("Cliente", X.nombre, y);
-    doc.text("Dirección", X.dir, y);
-    doc.text("Teléfono", X.tel, y);
-    doc.text("Últ. compra", X.fecha, y, { align: "right" });
-    doc.setFont(undefined, "normal");
-    doc.line(14, y + 2, 196, y + 2);
-    return y + 8;
-  };
-
-  doc.setFontSize(16);
-  doc.text("Lista de clientes", 14, 18);
-  doc.setFontSize(10);
-  doc.text(`${ORDENES_LISTA[orden] || ORDENES_LISTA.alfa} - ${clientes.length} clientes - ${fechaCorta(hoy)}`, 14, 25);
-
-  let y = encabezado(34);
-  doc.setFontSize(9);
-  clientes.forEach((c) => {
-    const nombreL = doc.splitTextToSize(String(c.nombre || ""), 54);
-    const dirL = doc.splitTextToSize(String(c.direccion || "-"), 62);
-    const alto = Math.max(nombreL.length, dirL.length) * 4.5 + 2.5;
-    if (y + alto > 285) {
-      doc.addPage();
-      y = encabezado(20);
-      doc.setFontSize(9);
-    }
-    doc.text(String(c.numero ?? "-"), X.num, y);
-    doc.text(nombreL, X.nombre, y);
-    doc.text(dirL, X.dir, y);
-    doc.text(String(c.telefono || "-"), X.tel, y);
-    doc.text(fechaCorta(c._ultimaFecha), X.fecha, y, { align: "right" });
-    y += alto;
-  });
-
-  return doc;
-}
-
-function imprimirListaClientes(orden) {
-  if (!window.jspdf) return;
-  if (!clientesCache.length) { alert("Todavía no hay clientes para imprimir."); return; }
-  const doc = construirPDFListaClientes(orden);
-  doc.autoPrint();
-  window.open(doc.output("bloburl"), "_blank");
 }
 
 async function abrirFichaCliente(c) {
@@ -749,6 +668,7 @@ async function abrirFichaCliente(c) {
         <td>${r.fecha}</td>
         <td class="num">${money(r.total)}</td>
         <td class="row-actions">
+          <button class="icon-btn" data-action="edit" data-id="${r.id}" title="Editar">✎</button>
           <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
           <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
           <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
@@ -757,6 +677,7 @@ async function abrirFichaCliente(c) {
     : `<tr><td colspan="3" class="empty-row">Sin remitos todavía</td></tr>`;
   histBody.querySelectorAll("[data-action]").forEach((btn) => {
     const id = btn.dataset.id;
+    if (btn.dataset.action === "edit") btn.addEventListener("click", () => editarRemito(id));
     if (btn.dataset.action === "print") btn.addEventListener("click", () => reimprimirRemito(id));
     if (btn.dataset.action === "pdf") btn.addEventListener("click", () => redescargarRemito(id));
     if (btn.dataset.action === "del") btn.addEventListener("click", () => borrarRemito(id, async () => {
@@ -777,7 +698,7 @@ async function cargarHistorial() {
   const q = document.getElementById("historialFiltro").value.trim();
   let query = sb
     .from("remitos")
-    .select("id, fecha, total, clientes(nombre, direccion)")
+    .select("id, fecha, total, clientes(nombre)")
     .order("fecha", { ascending: false })
     .limit(200);
 
@@ -785,11 +706,7 @@ async function cargarHistorial() {
   if (error) { console.error(error); return; }
 
   const filtrados = q
-    ? data.filter((r) => {
-        const t = q.toLowerCase();
-        return (r.clientes?.nombre || "").toLowerCase().includes(t) ||
-               (r.clientes?.direccion || "").toLowerCase().includes(t);
-      })
+    ? data.filter((r) => r.clientes?.nombre?.toLowerCase().includes(q.toLowerCase()))
     : data;
 
   const body = document.getElementById("historialBody");
@@ -799,6 +716,7 @@ async function cargarHistorial() {
         <td>${r.clientes?.nombre || "—"}</td>
         <td class="num">${money(r.total)}</td>
         <td class="row-actions">
+          <button class="icon-btn" data-action="edit" data-id="${r.id}" title="Editar">✎</button>
           <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
           <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
           <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
@@ -807,6 +725,7 @@ async function cargarHistorial() {
     : `<tr><td colspan="4" class="empty-row">No hay remitos todavía</td></tr>`;
   body.querySelectorAll("[data-action]").forEach((btn) => {
     const id = btn.dataset.id;
+    if (btn.dataset.action === "edit") btn.addEventListener("click", () => editarRemito(id));
     if (btn.dataset.action === "print") btn.addEventListener("click", () => reimprimirRemito(id));
     if (btn.dataset.action === "pdf") btn.addEventListener("click", () => redescargarRemito(id));
     if (btn.dataset.action === "del") btn.addEventListener("click", () => borrarRemito(id, cargarHistorial));
