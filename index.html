@@ -27,7 +27,7 @@
         <div class="card">
           <h2>Cliente</h2>
           <div class="field">
-            <input type="text" id="clienteBuscar" placeholder="Buscar cliente por nombre..." autocomplete="off" />
+            <input type="text" id="clienteBuscar" placeholder="Buscar cliente por nombre o dirección..." autocomplete="off" />
             <div id="clienteResultados" class="dropdown-results"></div>
           </div>
           <div id="clienteSeleccionado" class="cliente-chip hidden">
@@ -96,23 +96,16 @@
       <div class="panel-col">
         <div class="card">
           <h2>Clientes</h2>
-          <input type="text" id="clientesFiltro" placeholder="Filtrar por nombre..." autocomplete="off" />
+          <input type="text" id="clientesFiltro" placeholder="Filtrar por nombre o dirección..." autocomplete="off" />
 
 <div class="lista-imprimir">
-
-<select id="listaOrden">
-
-<option value="alfa">Alfabética (A–Z)</option>
-
-<option value="direccion">Por dirección</option>
-
-<option value="ultima">Por última venta</option>
-
-</select>
-
-<button id="btnImprimirLista" class="btn-secondary" type="button">Imprimir lista</button>
-
-</div>
+            <select id="listaOrden">
+              <option value="alfa">Alfabética (A–Z)</option>
+              <option value="direccion">Por dirección</option>
+              <option value="ultima" selected>Por última venta</option>
+            </select>
+            <button id="btnImprimirLista" class="btn-secondary" type="button">Imprimir lista</button>
+          </div>
           <ul id="clientesLista" class="clientes-lista"></ul>
         </div>
       </div>
@@ -158,7 +151,7 @@
     <div class="card">
       <div class="card-header-row">
         <h2>Todos los remitos</h2>
-        <input type="text" id="historialFiltro" placeholder="Filtrar por cliente..." autocomplete="off" />
+        <input type="text" id="historialFiltro" placeholder="Filtrar por cliente o dirección..." autocomplete="off" />
       </div>
       <table class="items-table" id="historialTable">
         <thead><tr><th>Fecha</th><th>Cliente</th><th class="num">Total</th><th></th></tr></thead>
@@ -209,6 +202,19 @@
     </table>
     <div class="modal-actions">
       <button id="modalTopCerrar" class="btn-secondary" type="button">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div id="modalVistaPrevia" class="modal hidden">
+  <div class="modal-box modal-preview">
+    <h2 id="vistaPreviaTitulo">Vista previa</h2>
+    <iframe id="vistaPreviaFrame" title="Vista previa"></iframe>
+    <p class="msg preview-ayuda">Si no ves la vista previa, <a id="vistaPreviaAbrir" href="#" target="_blank" rel="noopener">abrila en otra pestaña</a>.</p>
+    <div class="modal-actions">
+      <button id="vistaPreviaCerrar" class="btn-link" type="button">Cerrar sin hacer nada</button>
+      <button id="vistaPreviaGuardar" class="btn-secondary" type="button">Guardar en mi equipo</button>
+      <button id="vistaPreviaImprimir" class="btn-primary" type="button">Enviar a la impresora</button>
     </div>
   </div>
 </div>

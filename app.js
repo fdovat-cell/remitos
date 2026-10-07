@@ -27,6 +27,12 @@ function productoCampos(p) {
 // Estado
 // ===================================================================
 let productos = [];        // catálogo de buscador-v2
+
+// Escapa texto para meterlo en innerHTML
+function esc(t) {
+  return String(t ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+}
+
 let clienteActual = null;  // {id, nombre, direccion, ...}
 let items = [];            // items del remito en edición
 let clientesCache = [];
@@ -42,6 +48,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupTabs();
   setupNuevoRemito();
   setupClientes();
+  setupVistaPrevia();
   setupHistorial();
   cargarProductos();
   cargarClientes();
@@ -79,17 +86,19 @@ function setupNuevoRemito() {
   clienteInput.addEventListener("input", async () => {
     const q = clienteInput.value.trim();
     if (!q) { clienteResultados.innerHTML = ""; return; }
+    const qSeguro = q.replace(/[,()*%]/g, " ").trim();
     const { data, error } = await sb
       .from("clientes")
       .select("id, nombre, direccion")
-      .ilike("nombre", `%${q}%`)
+      .or(`nombre.ilike.%${qSeguro}%,direccion.ilike.%${qSeguro}%`)
+      .order("nombre")
       .limit(8);
     if (error) { console.error(error); return; }
     clienteResultados.innerHTML = "";
     data.forEach((c) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      div.innerHTML = `<span>${c.nombre}</span>`;
+      div.innerHTML = `<span><strong>${esc(c.nombre)}</strong><br><small class="dir-sub">${esc(c.direccion || "sin dirección")}</small></span>`;
       div.addEventListener("click", () => seleccionarCliente(c));
       clienteResultados.appendChild(div);
     });
@@ -181,7 +190,7 @@ function seleccionarCliente(c) {
   document.getElementById("clienteBuscar").value = "";
   document.getElementById("clienteBuscar").classList.add("hidden");
   document.getElementById("clienteResultados").innerHTML = "";
-  document.getElementById("clienteSeleccionadoNombre").textContent = c.nombre;
+  document.getElementById("clienteSeleccionadoNombre").innerHTML = `<strong>${esc(c.nombre)}</strong>${c.direccion ? ` <small class="dir-sub">· ${esc(c.direccion)}</small>` : ""}`;
   document.getElementById("clienteSeleccionado").classList.remove("hidden");
   document.getElementById("btnVerTopCliente").classList.remove("hidden");
 }
@@ -367,23 +376,64 @@ function construirPDFRemito(r) {
   return doc;
 }
 
+function nombreArchivoRemito(r) {
+  return `remito-${r.cliente.nombre.replace(/\s+/g, "_")}-${r.fecha}.pdf`;
+}
+
+// "Imprimir" abre siempre la vista previa; desde ahí se elige impresora, guardar o cerrar.
 function imprimirRemitoActual(remito) {
   const r = remito || window._ultimoRemito;
   if (!r || !window.jspdf) return;
-  const doc = construirPDFRemito(r);
-  // Marca el PDF para que se abra directamente el diálogo de impresión
-  // (así no hace falta descargarlo primero, funciona igual en celular y PC).
-  doc.autoPrint();
-  const blobUrl = doc.output("bloburl");
-  window.open(blobUrl, "_blank");
+  mostrarVistaPrevia(construirPDFRemito(r), nombreArchivoRemito(r), `Remito de ${r.cliente.nombre} (${r.fecha})`);
+}
+
+// ===================================================================
+// VISTA PREVIA (imprimir / guardar en el equipo / cerrar sin hacer nada)
+// ===================================================================
+let _vistaPrevia = null; // { doc, nombreArchivo, url }
+
+function mostrarVistaPrevia(doc, nombreArchivo, titulo) {
+  cerrarVistaPrevia();
+  const url = doc.output("bloburl");
+  _vistaPrevia = { doc, nombreArchivo, url };
+  document.getElementById("vistaPreviaTitulo").textContent = titulo || "Vista previa";
+  document.getElementById("vistaPreviaFrame").src = url;
+  document.getElementById("vistaPreviaAbrir").href = url;
+  document.getElementById("modalVistaPrevia").classList.remove("hidden");
+}
+
+function cerrarVistaPrevia() {
+  document.getElementById("modalVistaPrevia").classList.add("hidden");
+  document.getElementById("vistaPreviaFrame").src = "about:blank";
+  if (_vistaPrevia) { URL.revokeObjectURL(_vistaPrevia.url); _vistaPrevia = null; }
+}
+
+function setupVistaPrevia() {
+  document.getElementById("vistaPreviaCerrar").addEventListener("click", cerrarVistaPrevia);
+  document.getElementById("vistaPreviaGuardar").addEventListener("click", () => {
+    if (_vistaPrevia) _vistaPrevia.doc.save(_vistaPrevia.nombreArchivo);
+  });
+  document.getElementById("vistaPreviaImprimir").addEventListener("click", () => {
+    if (!_vistaPrevia) return;
+    const frame = document.getElementById("vistaPreviaFrame");
+    try {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch (e) {
+      // Si el navegador no deja imprimir desde la vista previa, se abre el PDF en otra pestaña.
+      window.open(_vistaPrevia.url, "_blank");
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && _vistaPrevia) cerrarVistaPrevia();
+  });
 }
 
 function descargarRemitoPDF(remito) {
   const r = remito;
   if (!r || !window.jspdf) return;
   const doc = construirPDFRemito(r);
-  const nombreArchivo = `remito-${r.cliente.nombre.replace(/\s+/g, "_")}-${r.fecha}.pdf`;
-  doc.save(nombreArchivo);
+  doc.save(nombreArchivoRemito(r));
 }
 
 // Trae un remito ya guardado (con cliente e ítems) para reimprimir, descargar o editar.
@@ -570,6 +620,11 @@ function setupModalCliente() {
 function setupClientes() {
   setupModalCliente();
   document.getElementById("clientesFiltro").addEventListener("input", renderClientesLista);
+  document.getElementById("listaOrden").addEventListener("change", renderClientesLista);
+  document.getElementById("btnImprimirLista").addEventListener("click", () => {
+    if (!window.jspdf) return;
+    mostrarVistaPrevia(construirPDFListaClientes(), `lista-clientes-${new Date().toISOString().slice(0, 10)}.pdf`, "Lista de clientes");
+  });
   document.getElementById("btnEditarCliente").addEventListener("click", () => {
     if (clienteFichaActual) abrirModalCliente(clienteFichaActual);
   });
@@ -605,19 +660,94 @@ async function cargarClientes() {
   renderClientesLista();
 }
 
+const _cmp = (a, b) => String(a || "").localeCompare(String(b || ""), "es", { sensitivity: "base", numeric: true });
+
+function ordenarClientes(arr, orden) {
+  const copia = [...arr];
+  if (orden === "alfa") {
+    copia.sort((a, b) => _cmp(a.nombre, b.nombre));
+  } else if (orden === "direccion") {
+    copia.sort((a, b) => {
+      if (!a.direccion && !b.direccion) return _cmp(a.nombre, b.nombre);
+      if (!a.direccion) return 1;
+      if (!b.direccion) return -1;
+      return _cmp(a.direccion, b.direccion) || _cmp(a.nombre, b.nombre);
+    });
+  } else { // "ultima": más reciente primero, sin compras al final
+    copia.sort((a, b) => {
+      if (!a._ultimaFecha && !b._ultimaFecha) return _cmp(a.nombre, b.nombre);
+      if (!a._ultimaFecha) return 1;
+      if (!b._ultimaFecha) return -1;
+      return b._ultimaFecha.localeCompare(a._ultimaFecha);
+    });
+  }
+  return copia;
+}
+
+// Clientes que pasan el filtro (nombre o dirección), en el orden elegido.
+function clientesFiltrados() {
+  const q = document.getElementById("clientesFiltro").value.trim().toLowerCase();
+  const orden = document.getElementById("listaOrden").value;
+  const filtrados = clientesCache.filter((c) =>
+    (c.nombre || "").toLowerCase().includes(q) || (c.direccion || "").toLowerCase().includes(q));
+  return ordenarClientes(filtrados, orden);
+}
+
+const ETIQUETA_ORDEN = { alfa: "alfabético (A–Z)", direccion: "por dirección", ultima: "por última venta" };
+
+function construirPDFListaClientes() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF();
+  const orden = document.getElementById("listaOrden").value;
+  const lista = clientesFiltrados();
+
+  const cabecera = (y) => {
+    doc.setFontSize(9);
+    doc.setFont(undefined, "bold");
+    doc.text("#", 14, y);
+    doc.text("Cliente", 24, y);
+    doc.text("Dirección", 78, y);
+    doc.text("Teléfono", 142, y);
+    doc.text("Última venta", 196, y, { align: "right" });
+    doc.setFont(undefined, "normal");
+    doc.line(14, y + 2, 196, y + 2);
+    return y + 8;
+  };
+
+  doc.setFontSize(16);
+  doc.text("Lista de clientes", 14, 18);
+  doc.setFontSize(9);
+  doc.text(`Orden: ${ETIQUETA_ORDEN[orden]}  ·  ${lista.length} cliente${lista.length === 1 ? "" : "s"}  ·  ${new Date().toISOString().slice(0, 10)}`, 14, 25);
+
+  let y = cabecera(34);
+  doc.setFontSize(9);
+  lista.forEach((c) => {
+    const nom = doc.splitTextToSize(String(c.nombre || ""), 50);
+    const dir = doc.splitTextToSize(String(c.direccion || "—"), 60);
+    const lineas = Math.max(nom.length, dir.length);
+    if (y + lineas * 4.5 > 285) { doc.addPage(); y = cabecera(20); doc.setFontSize(9); }
+    doc.text(String(c.numero ?? "—"), 14, y);
+    doc.text(nom, 24, y);
+    doc.text(dir, 78, y);
+    doc.text(String(c.telefono || "—"), 142, y);
+    doc.text(c._ultimaFecha || "sin compras", 196, y, { align: "right" });
+    y += lineas * 4.5 + 2;
+  });
+  return doc;
+}
+
 function renderClientesLista() {
   const q = document.getElementById("clientesFiltro").value.trim().toLowerCase();
   const lista = document.getElementById("clientesLista");
   lista.innerHTML = "";
-  clientesCache
-    .filter((c) => c.nombre.toLowerCase().includes(q))
+  clientesFiltrados()
     .forEach((c) => {
       const li = document.createElement("li");
       const dias = diasDesde(c._ultimaFecha);
       const sub = c._ultimaFecha
         ? `hace ${dias} día${dias === 1 ? "" : "s"}`
         : "sin compras";
-      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${c.nombre}</div><div class="cliente-li-sub">${sub}</div>`;
+      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${esc(c.nombre)}</div><div class="cliente-li-dir">${esc(c.direccion || "sin dirección")}</div><div class="cliente-li-sub">${sub}</div>`;
       if (clienteFichaActual && clienteFichaActual.id === c.id) li.classList.add("active");
       li.addEventListener("click", () => abrirFichaCliente(c));
       lista.appendChild(li);
@@ -698,7 +828,7 @@ async function cargarHistorial() {
   const q = document.getElementById("historialFiltro").value.trim();
   let query = sb
     .from("remitos")
-    .select("id, fecha, total, clientes(nombre)")
+    .select("id, fecha, total, clientes(nombre, direccion)")
     .order("fecha", { ascending: false })
     .limit(200);
 
@@ -706,14 +836,17 @@ async function cargarHistorial() {
   if (error) { console.error(error); return; }
 
   const filtrados = q
-    ? data.filter((r) => r.clientes?.nombre?.toLowerCase().includes(q.toLowerCase()))
+    ? data.filter((r) => {
+        const t = q.toLowerCase();
+        return (r.clientes?.nombre || "").toLowerCase().includes(t) || (r.clientes?.direccion || "").toLowerCase().includes(t);
+      })
     : data;
 
   const body = document.getElementById("historialBody");
   body.innerHTML = filtrados.length
     ? filtrados.map((r) => `<tr>
         <td>${r.fecha}</td>
-        <td>${r.clientes?.nombre || "—"}</td>
+        <td><strong>${esc(r.clientes?.nombre || "—")}</strong><br><small class="dir-sub">${esc(r.clientes?.direccion || "sin dirección")}</small></td>
         <td class="num">${money(r.total)}</td>
         <td class="row-actions">
           <button class="icon-btn" data-action="edit" data-id="${r.id}" title="Editar">✎</button>
