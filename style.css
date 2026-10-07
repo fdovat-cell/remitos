@@ -276,3 +276,24 @@ input:focus, textarea:focus, select:focus {
 .modal-preview iframe { width: 100%; height: 62vh; border: 1px solid var(--line, #d9ded9); border-radius: 6px; background: #f4f4f4; }
 .preview-ayuda { margin: 8px 0 10px; font-size: 0.8rem; }
 .modal-preview .modal-actions { flex-wrap: wrap; align-items: center; }
+
+/* Historial agrupado por día, cada remito como tarjeta desplegable */
+.dia-bloque { margin-top: 16px; }
+.dia-header {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  background: var(--accent-soft); padding: 9px 12px; border-radius: var(--radius);
+}
+.dia-fecha { font-weight: 700; }
+.dia-resumen { font-size: 0.82rem; color: var(--ink-soft); }
+.remito-card { border: 1px solid var(--line); border-radius: var(--radius); margin-top: 8px; background: var(--panel); }
+.remito-card.abierto { border-color: var(--accent); }
+.remito-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; flex-wrap: wrap;
+}
+.remito-head:hover { background: var(--accent-soft); }
+.remito-flecha { color: var(--ink-soft); width: 12px; }
+.remito-head .hora { color: var(--ink-soft); font-size: 0.85rem; white-space: nowrap; }
+.remito-cliente { flex: 1; min-width: 160px; }
+.remito-total { font-weight: 600; white-space: nowrap; }
+.remito-detalle { padding: 4px 12px 12px; border-top: 1px dashed var(--line); }
+.detalle-table tfoot td { border-top: 1px solid var(--line); padding-top: 8px; }

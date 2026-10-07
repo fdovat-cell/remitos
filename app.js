@@ -828,8 +828,9 @@ async function cargarHistorial() {
   const q = document.getElementById("historialFiltro").value.trim();
   let query = sb
     .from("remitos")
-    .select("id, fecha, total, clientes(nombre, direccion)")
+    .select("id, fecha, total, created_at, clientes(nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
     .order("fecha", { ascending: false })
+    .order("created_at", { ascending: true })
     .limit(200);
 
   const { data, error } = await query;
@@ -842,20 +843,82 @@ async function cargarHistorial() {
       })
     : data;
 
-  const body = document.getElementById("historialBody");
-  body.innerHTML = filtrados.length
-    ? filtrados.map((r) => `<tr>
-        <td>${r.fecha}</td>
-        <td><strong>${esc(r.clientes?.nombre || "—")}</strong><br><small class="dir-sub">${esc(r.clientes?.direccion || "sin dirección")}</small></td>
-        <td class="num">${money(r.total)}</td>
-        <td class="row-actions">
-          <button class="icon-btn" data-action="edit" data-id="${r.id}" title="Editar">✎</button>
-          <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
-          <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
-          <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
-        </td>
-      </tr>`).join("")
-    : `<tr><td colspan="4" class="empty-row">No hay remitos todavía</td></tr>`;
+  // Agrupa por fecha (días más recientes primero; dentro de cada día, en el orden en que se hicieron).
+  const dias = [];
+  filtrados.forEach((r) => {
+    let dia = dias[dias.length - 1];
+    if (!dia || dia.fecha !== r.fecha) { dia = { fecha: r.fecha, remitos: [] }; dias.push(dia); }
+    dia.remitos.push(r);
+  });
+
+  const etiquetaDia = (f) => {
+    const t = new Date(f + "T00:00:00").toLocaleDateString("es-UY", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  };
+  const horaDe = (iso) => iso ? new Date(iso).toLocaleTimeString("es-UY", { hour: "2-digit", minute: "2-digit" }) : "";
+
+  const body = document.getElementById("historialLista");
+  const detalleHTML = (r) => {
+    const its = r.remito_items || [];
+    if (!its.length) return `<p class="empty-row">Este remito no tiene productos cargados.</p>`;
+    return `<table class="items-table detalle-table">
+        <thead><tr><th>Código</th><th>Descripción</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">Subtotal</th></tr></thead>
+        <tbody>${its.map((it) => `<tr>
+          <td>${esc(it.codigo || "—")}</td>
+          <td>${esc(it.descripcion)}</td>
+          <td class="num">${esc(Number(it.cantidad))}</td>
+          <td class="num">${money(Number(it.precio_unitario))}</td>
+          <td class="num">${money(Number(it.cantidad) * Number(it.precio_unitario))}</td>
+        </tr>`).join("")}</tbody>
+        <tfoot><tr><td colspan="4" class="num"><strong>Total</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr></tfoot>
+      </table>`;
+  };
+
+  body.innerHTML = dias.length
+    ? dias.map((d) => {
+        const totalDia = d.remitos.reduce((acc, r) => acc + Number(r.total || 0), 0);
+        const n = d.remitos.length;
+        return `<div class="dia-bloque">
+          <div class="dia-header">
+            <span class="dia-fecha">${esc(etiquetaDia(d.fecha))}</span>
+            <span class="dia-resumen">${n} remito${n === 1 ? "" : "s"} · Total del día ${money(totalDia)}</span>
+          </div>
+          ${d.remitos.map((r) => {
+            const cant = (r.remito_items || []).length;
+            return `<div class="remito-card">
+            <div class="remito-head" data-toggle="${r.id}" role="button" tabindex="0" aria-expanded="false">
+              <span class="remito-flecha">▸</span>
+              <span class="hora">${esc(horaDe(r.created_at))}</span>
+              <span class="remito-cliente"><strong>${esc(r.clientes?.nombre || "—")}</strong><br><small class="dir-sub">${esc(r.clientes?.direccion || "sin dirección")} · ${cant} producto${cant === 1 ? "" : "s"}</small></span>
+              <span class="remito-total">${money(r.total)}</span>
+              <span class="row-actions">
+                <button class="icon-btn" data-action="edit" data-id="${r.id}" title="Editar">✎</button>
+                <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
+                <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
+                <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
+              </span>
+            </div>
+            <div class="remito-detalle hidden">${detalleHTML(r)}</div>
+          </div>`;
+          }).join("")}
+        </div>`;
+      }).join("")
+    : `<p class="empty-row">No hay remitos todavía</p>`;
+
+  // Abrir / cerrar el detalle de cada remito
+  body.querySelectorAll(".remito-head").forEach((head) => {
+    const alternar = () => {
+      const detalle = head.parentElement.querySelector(".remito-detalle");
+      const abierto = detalle.classList.toggle("hidden") === false;
+      head.setAttribute("aria-expanded", abierto ? "true" : "false");
+      head.querySelector(".remito-flecha").textContent = abierto ? "▾" : "▸";
+      head.parentElement.classList.toggle("abierto", abierto);
+    };
+    head.addEventListener("click", (e) => { if (!e.target.closest("button")) alternar(); });
+    head.addEventListener("keydown", (e) => {
+      if ((e.key === "Enter" || e.key === " ") && !e.target.closest("button")) { e.preventDefault(); alternar(); }
+    });
+  });
   body.querySelectorAll("[data-action]").forEach((btn) => {
     const id = btn.dataset.id;
     if (btn.dataset.action === "edit") btn.addEventListener("click", () => editarRemito(id));
