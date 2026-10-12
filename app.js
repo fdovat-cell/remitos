@@ -628,6 +628,46 @@ function setupClientes() {
   document.getElementById("btnEditarCliente").addEventListener("click", () => {
     if (clienteFichaActual) abrirModalCliente(clienteFichaActual);
   });
+  document.getElementById("btnEliminarCliente").addEventListener("click", eliminarClienteActual);
+}
+
+// ===================================================================
+// ELIMINAR CLIENTE (borra también todos sus remitos)
+// ===================================================================
+async function eliminarClienteActual() {
+  const c = clienteFichaActual;
+  if (!c) return;
+
+  const { count, error: errCount } = await sb
+    .from("remitos")
+    .select("id", { count: "exact", head: true })
+    .eq("cliente_id", c.id);
+  if (errCount) { alert("Error: " + errCount.message); return; }
+
+  const aviso = count > 0
+    ? `¿Eliminar a "${c.nombre}" y sus ${count} remito${count === 1 ? "" : "s"}? No se puede deshacer.`
+    : `¿Eliminar a "${c.nombre}"? No se puede deshacer.`;
+  if (!confirm(aviso)) return;
+
+  // Los remitos van primero (sus ítems se borran en cascada)
+  const { error: errRemitos } = await sb.from("remitos").delete().eq("cliente_id", c.id);
+  if (errRemitos) { alert("Error al borrar los remitos: " + errRemitos.message); return; }
+
+  const { error: errCliente } = await sb.from("clientes").delete().eq("id", c.id);
+  if (errCliente) { alert("Error al borrar el cliente: " + errCliente.message); return; }
+
+  // Si estaba elegido en "Nuevo remito", lo quito
+  if (clienteActual && clienteActual.id === c.id) {
+    clienteActual = null;
+    document.getElementById("clienteSeleccionado").classList.add("hidden");
+    document.getElementById("btnVerTopCliente").classList.add("hidden");
+    document.getElementById("clienteBuscar").classList.remove("hidden");
+  }
+
+  clienteFichaActual = null;
+  document.getElementById("clienteFicha").classList.add("hidden");
+  document.getElementById("clienteFichaVacio").classList.remove("hidden");
+  await cargarClientes();
 }
 
 async function cargarClientes() {
