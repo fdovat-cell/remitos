@@ -12,4 +12,8 @@ const CONFIG = {
   // Verificar en Supabase → Storage → catalogo-data → productos.json → "Get URL"
   PRODUCTOS_JSON_URL:
     "https://xxlgsipmocwizhafinwr.supabase.co/storage/v1/object/public/catalogo-data/productos.json",
+
+  // Catálogo de pelsas-distribuidora (lo escribe su admin en GitHub).
+  DISTRIBUIDORA_JSON_URL:
+    "https://raw.githubusercontent.com/fdovat-cell/pelsas-distribuidora/main/data.json",
 };

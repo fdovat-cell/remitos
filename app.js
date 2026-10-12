@@ -66,14 +66,58 @@ function setupTabs() {
   });
 }
 
-async function cargarProductos() {
+async function cargarCatalogoBuscador() {
   try {
     const res = await fetch(CONFIG.PRODUCTOS_JSON_URL);
     const data = await res.json();
-    productos = (Array.isArray(data) ? data : data.productos || []).map(productoCampos);
+    return (Array.isArray(data) ? data : data.productos || []).map(productoCampos);
   } catch (e) {
-    console.error("No se pudo cargar el catálogo de productos:", e);
+    console.error("No se pudo cargar el catálogo de buscador-v2:", e);
+    return [];
   }
+}
+
+// Catálogo de pelsas-distribuidora: aplana marcas -> productos.
+// Si un producto tiene precio de unidad y de caja distintos, aparecen las dos opciones.
+async function cargarCatalogoDistribuidora() {
+  if (!CONFIG.DISTRIBUIDORA_JSON_URL) return [];
+  try {
+    const res = await fetch(CONFIG.DISTRIBUIDORA_JSON_URL);
+    const data = await res.json();
+    const marcas = {};
+    (data.brands || []).forEach((b) => { marcas[b.id] = b; });
+    const out = [];
+    Object.entries(data.products || {}).forEach(([marcaId, lista]) => {
+      const marca = marcas[marcaId];
+      if (marca && marca.activo === false) return;
+      const busqueda = String((marca && marca.name) || marcaId).toLowerCase();
+      (lista || []).forEach((p) => {
+        if (p.activo === false) return;
+        const codigo = String(p.art || p.id || "");
+        const nombre = String(p.name || "");
+        const unit = Number(p.unit) || 0;
+        const caja = Number(p.caja) || 0;
+        if (unit && caja && unit !== caja) {
+          out.push({ codigo, nombre: `${nombre} (unidad)`, precio: unit, busqueda });
+          out.push({ codigo, nombre: `${nombre} (${p.present || "caja"})`, precio: caja, busqueda });
+        } else {
+          out.push({ codigo, nombre: p.present ? `${nombre} (${p.present})` : nombre, precio: unit || caja, busqueda });
+        }
+      });
+    });
+    return out;
+  } catch (e) {
+    console.error("No se pudo cargar el catálogo de la distribuidora:", e);
+    return [];
+  }
+}
+
+async function cargarProductos() {
+  const [buscador, distribuidora] = await Promise.all([
+    cargarCatalogoBuscador(),
+    cargarCatalogoDistribuidora(),
+  ]);
+  productos = buscador.concat(distribuidora);
 }
 
 // ===================================================================
@@ -129,8 +173,12 @@ function setupNuevoRemito() {
     const q = prodInput.value.trim().toLowerCase();
     prodResultados.innerHTML = "";
     if (!q) return;
+    const tokens = q.split(/\s+/);
     const matches = productos
-      .filter((p) => p.codigo.toLowerCase().includes(q) || p.nombre.toLowerCase().includes(q))
+      .filter((p) => {
+        const texto = (p.codigo + " " + p.nombre + " " + (p.busqueda || "")).toLowerCase();
+        return tokens.every((t) => texto.includes(t));
+      })
       .slice(0, 10);
     matches.forEach((p) => {
       const div = document.createElement("div");
