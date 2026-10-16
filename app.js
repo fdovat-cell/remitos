@@ -27,12 +27,7 @@ function productoCampos(p) {
 // Estado
 // ===================================================================
 let productos = [];        // catálogo de buscador-v2
-
-// Escapa texto para meterlo en innerHTML
-function esc(t) {
-  return String(t ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
-}
-
+let productosManuales = []; // artículos cargados a mano, guardados en Supabase (tabla productos_manuales)
 let clienteActual = null;  // {id, nombre, direccion, ...}
 let items = [];            // items del remito en edición
 let clientesCache = [];
@@ -48,9 +43,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupTabs();
   setupNuevoRemito();
   setupClientes();
-  setupVistaPrevia();
   setupHistorial();
   cargarProductos();
+  cargarProductosManuales();
   cargarClientes();
 });
 
@@ -66,58 +61,54 @@ function setupTabs() {
   });
 }
 
-async function cargarCatalogoBuscador() {
+async function cargarProductos() {
   try {
     const res = await fetch(CONFIG.PRODUCTOS_JSON_URL);
     const data = await res.json();
-    return (Array.isArray(data) ? data : data.productos || []).map(productoCampos);
+    productos = (Array.isArray(data) ? data : data.productos || []).map(productoCampos);
   } catch (e) {
-    console.error("No se pudo cargar el catálogo de buscador-v2:", e);
-    return [];
+    console.error("No se pudo cargar el catálogo de productos:", e);
   }
 }
 
-// Catálogo de pelsas-distribuidora: aplana marcas -> productos.
-// Si un producto tiene precio de unidad y de caja distintos, aparecen las dos opciones.
-async function cargarCatalogoDistribuidora() {
-  if (!CONFIG.DISTRIBUIDORA_JSON_URL) return [];
-  try {
-    const res = await fetch(CONFIG.DISTRIBUIDORA_JSON_URL);
-    const data = await res.json();
-    const marcas = {};
-    (data.brands || []).forEach((b) => { marcas[b.id] = b; });
-    const out = [];
-    Object.entries(data.products || {}).forEach(([marcaId, lista]) => {
-      const marca = marcas[marcaId];
-      if (marca && marca.activo === false) return;
-      const busqueda = String((marca && marca.name) || marcaId).toLowerCase();
-      (lista || []).forEach((p) => {
-        if (p.activo === false) return;
-        const codigo = String(p.art || p.id || "");
-        const nombre = String(p.name || "");
-        const unit = Number(p.unit) || 0;
-        const caja = Number(p.caja) || 0;
-        if (unit && caja && unit !== caja) {
-          out.push({ codigo, nombre: `${nombre} (unidad)`, precio: unit, busqueda });
-          out.push({ codigo, nombre: `${nombre} (${p.present || "caja"})`, precio: caja, busqueda });
-        } else {
-          out.push({ codigo, nombre: p.present ? `${nombre} (${p.present})` : nombre, precio: unit || caja, busqueda });
-        }
-      });
-    });
-    return out;
-  } catch (e) {
-    console.error("No se pudo cargar el catálogo de la distribuidora:", e);
-    return [];
-  }
+// Artículos manuales guardados: quedan disponibles en la búsqueda de todos los remitos.
+async function cargarProductosManuales() {
+  const { data, error } = await sb
+    .from("productos_manuales")
+    .select("id, codigo, descripcion, precio")
+    .order("descripcion");
+  if (error) { console.error("No se pudieron cargar los artículos manuales:", error); return; }
+  productosManuales = (data || []).map((p) => ({
+    id: p.id,
+    codigo: String(p.codigo || ""),
+    nombre: p.descripcion,
+    precio: Number(p.precio) || 0,
+    manual: true,
+  }));
 }
 
-async function cargarProductos() {
-  const [buscador, distribuidora] = await Promise.all([
-    cargarCatalogoBuscador(),
-    cargarCatalogoDistribuidora(),
-  ]);
-  productos = buscador.concat(distribuidora);
+// Guarda un artículo manual para futuros remitos. Si ya existe uno con el mismo
+// nombre, solo actualiza su precio. Devuelve un texto de error, o null si salió bien.
+async function guardarProductoManual(descripcion, precio) {
+  const existente = productosManuales.find(
+    (p) => p.nombre.trim().toLowerCase() === descripcion.trim().toLowerCase()
+  );
+  if (existente) {
+    if (existente.precio === precio) return null;
+    const { error } = await sb.from("productos_manuales").update({ precio }).eq("id", existente.id);
+    if (error) return error.message;
+    existente.precio = precio;
+    return null;
+  }
+  const { data, error } = await sb
+    .from("productos_manuales")
+    .insert({ codigo: "", descripcion: descripcion.trim(), precio })
+    .select()
+    .single();
+  if (error) return error.message;
+  productosManuales.push({ id: data.id, codigo: "", nombre: data.descripcion, precio: Number(data.precio) || 0, manual: true });
+  productosManuales.sort((a, b) => a.nombre.localeCompare(b.nombre));
+  return null;
 }
 
 // ===================================================================
@@ -130,19 +121,17 @@ function setupNuevoRemito() {
   clienteInput.addEventListener("input", async () => {
     const q = clienteInput.value.trim();
     if (!q) { clienteResultados.innerHTML = ""; return; }
-    const qSeguro = q.replace(/[,()*%]/g, " ").trim();
     const { data, error } = await sb
       .from("clientes")
       .select("id, nombre, direccion")
-      .or(`nombre.ilike.%${qSeguro}%,direccion.ilike.%${qSeguro}%`)
-      .order("nombre")
+      .ilike("nombre", `%${q}%`)
       .limit(8);
     if (error) { console.error(error); return; }
     clienteResultados.innerHTML = "";
     data.forEach((c) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      div.innerHTML = `<span><strong>${esc(c.nombre)}</strong><br><small class="dir-sub">${esc(c.direccion || "sin dirección")}</small></span>`;
+      div.innerHTML = `<span>${c.nombre}</span>`;
       div.addEventListener("click", () => seleccionarCliente(c));
       clienteResultados.appendChild(div);
     });
@@ -173,19 +162,15 @@ function setupNuevoRemito() {
     const q = prodInput.value.trim().toLowerCase();
     prodResultados.innerHTML = "";
     if (!q) return;
-    const tokens = q.split(/\s+/);
-    const matches = productos
-      .filter((p) => {
-        const texto = (p.codigo + " " + p.nombre + " " + (p.busqueda || "")).toLowerCase();
-        return tokens.every((t) => texto.includes(t));
-      })
+    const matches = [...productosManuales, ...productos]
+      .filter((p) => p.codigo.toLowerCase().includes(q) || p.nombre.toLowerCase().includes(q))
       .slice(0, 10);
     matches.forEach((p) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      div.innerHTML = `<span>${p.nombre} <span class="item-code">${p.codigo}</span></span><span class="item-price">${money(p.precio)}</span>`;
+      div.innerHTML = `<span>${p.nombre} <span class="item-code">${p.manual ? "manual" : p.codigo}</span></span><span class="item-price">${money(p.precio)}</span>`;
       div.addEventListener("click", () => {
-        agregarItem({ codigo: p.codigo, descripcion: p.nombre, cantidad: 1, precio: p.precio });
+        agregarItem({ codigo: p.manual ? "" : p.codigo, descripcion: p.nombre, cantidad: 1, precio: p.precio });
         prodInput.value = "";
         prodResultados.innerHTML = "";
         prodInput.focus();
@@ -211,7 +196,7 @@ function setupNuevoRemito() {
   document.getElementById("modalItemCancelar").addEventListener("click", () => {
     document.getElementById("modalItem").classList.add("hidden");
   });
-  document.getElementById("modalItemAgregar").addEventListener("click", () => {
+  document.getElementById("modalItemAgregar").addEventListener("click", async () => {
     const descripcion = document.getElementById("itemManualDescripcion").value.trim();
     const cantidad = Number(document.getElementById("itemManualCantidad").value) || 0;
     const precio = Number(document.getElementById("itemManualPrecio").value) || 0;
@@ -219,6 +204,14 @@ function setupNuevoRemito() {
     agregarItem({ codigo: "", descripcion, cantidad, precio });
     document.getElementById("modalItem").classList.add("hidden");
     document.getElementById("productoBuscar").focus();
+
+    // Queda guardado para los próximos remitos.
+    const errGuardar = await guardarProductoManual(descripcion, precio);
+    const msg = document.getElementById("nuevoRemitoMsg");
+    if (errGuardar) {
+      msg.textContent = "Se agregó al remito, pero no se pudo guardar para futuros remitos: " + errGuardar;
+      msg.className = "msg error";
+    }
   });
 
   // ---- Guardar / imprimir ----
@@ -238,7 +231,7 @@ function seleccionarCliente(c) {
   document.getElementById("clienteBuscar").value = "";
   document.getElementById("clienteBuscar").classList.add("hidden");
   document.getElementById("clienteResultados").innerHTML = "";
-  document.getElementById("clienteSeleccionadoNombre").innerHTML = `<strong>${esc(c.nombre)}</strong>${c.direccion ? ` <small class="dir-sub">· ${esc(c.direccion)}</small>` : ""}`;
+  document.getElementById("clienteSeleccionadoNombre").textContent = c.nombre;
   document.getElementById("clienteSeleccionado").classList.remove("hidden");
   document.getElementById("btnVerTopCliente").classList.remove("hidden");
 }
@@ -424,64 +417,23 @@ function construirPDFRemito(r) {
   return doc;
 }
 
-function nombreArchivoRemito(r) {
-  return `remito-${r.cliente.nombre.replace(/\s+/g, "_")}-${r.fecha}.pdf`;
-}
-
-// "Imprimir" abre siempre la vista previa; desde ahí se elige impresora, guardar o cerrar.
 function imprimirRemitoActual(remito) {
   const r = remito || window._ultimoRemito;
   if (!r || !window.jspdf) return;
-  mostrarVistaPrevia(construirPDFRemito(r), nombreArchivoRemito(r), `Remito de ${r.cliente.nombre} (${r.fecha})`);
-}
-
-// ===================================================================
-// VISTA PREVIA (imprimir / guardar en el equipo / cerrar sin hacer nada)
-// ===================================================================
-let _vistaPrevia = null; // { doc, nombreArchivo, url }
-
-function mostrarVistaPrevia(doc, nombreArchivo, titulo) {
-  cerrarVistaPrevia();
-  const url = doc.output("bloburl");
-  _vistaPrevia = { doc, nombreArchivo, url };
-  document.getElementById("vistaPreviaTitulo").textContent = titulo || "Vista previa";
-  document.getElementById("vistaPreviaFrame").src = url;
-  document.getElementById("vistaPreviaAbrir").href = url;
-  document.getElementById("modalVistaPrevia").classList.remove("hidden");
-}
-
-function cerrarVistaPrevia() {
-  document.getElementById("modalVistaPrevia").classList.add("hidden");
-  document.getElementById("vistaPreviaFrame").src = "about:blank";
-  if (_vistaPrevia) { URL.revokeObjectURL(_vistaPrevia.url); _vistaPrevia = null; }
-}
-
-function setupVistaPrevia() {
-  document.getElementById("vistaPreviaCerrar").addEventListener("click", cerrarVistaPrevia);
-  document.getElementById("vistaPreviaGuardar").addEventListener("click", () => {
-    if (_vistaPrevia) _vistaPrevia.doc.save(_vistaPrevia.nombreArchivo);
-  });
-  document.getElementById("vistaPreviaImprimir").addEventListener("click", () => {
-    if (!_vistaPrevia) return;
-    const frame = document.getElementById("vistaPreviaFrame");
-    try {
-      frame.contentWindow.focus();
-      frame.contentWindow.print();
-    } catch (e) {
-      // Si el navegador no deja imprimir desde la vista previa, se abre el PDF en otra pestaña.
-      window.open(_vistaPrevia.url, "_blank");
-    }
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && _vistaPrevia) cerrarVistaPrevia();
-  });
+  const doc = construirPDFRemito(r);
+  // Marca el PDF para que se abra directamente el diálogo de impresión
+  // (así no hace falta descargarlo primero, funciona igual en celular y PC).
+  doc.autoPrint();
+  const blobUrl = doc.output("bloburl");
+  window.open(blobUrl, "_blank");
 }
 
 function descargarRemitoPDF(remito) {
   const r = remito;
   if (!r || !window.jspdf) return;
   const doc = construirPDFRemito(r);
-  doc.save(nombreArchivoRemito(r));
+  const nombreArchivo = `remito-${r.cliente.nombre.replace(/\s+/g, "_")}-${r.fecha}.pdf`;
+  doc.save(nombreArchivo);
 }
 
 // Trae un remito ya guardado (con cliente e ítems) para reimprimir, descargar o editar.
@@ -668,54 +620,9 @@ function setupModalCliente() {
 function setupClientes() {
   setupModalCliente();
   document.getElementById("clientesFiltro").addEventListener("input", renderClientesLista);
-  document.getElementById("listaOrden").addEventListener("change", renderClientesLista);
-  document.getElementById("btnImprimirLista").addEventListener("click", () => {
-    if (!window.jspdf) return;
-    mostrarVistaPrevia(construirPDFListaClientes(), `lista-clientes-${new Date().toISOString().slice(0, 10)}.pdf`, "Lista de clientes");
-  });
   document.getElementById("btnEditarCliente").addEventListener("click", () => {
     if (clienteFichaActual) abrirModalCliente(clienteFichaActual);
   });
-  document.getElementById("btnEliminarCliente").addEventListener("click", eliminarClienteActual);
-}
-
-// ===================================================================
-// ELIMINAR CLIENTE (borra también todos sus remitos)
-// ===================================================================
-async function eliminarClienteActual() {
-  const c = clienteFichaActual;
-  if (!c) return;
-
-  const { count, error: errCount } = await sb
-    .from("remitos")
-    .select("id", { count: "exact", head: true })
-    .eq("cliente_id", c.id);
-  if (errCount) { alert("Error: " + errCount.message); return; }
-
-  const aviso = count > 0
-    ? `¿Eliminar a "${c.nombre}" y sus ${count} remito${count === 1 ? "" : "s"}? No se puede deshacer.`
-    : `¿Eliminar a "${c.nombre}"? No se puede deshacer.`;
-  if (!confirm(aviso)) return;
-
-  // Los remitos van primero (sus ítems se borran en cascada)
-  const { error: errRemitos } = await sb.from("remitos").delete().eq("cliente_id", c.id);
-  if (errRemitos) { alert("Error al borrar los remitos: " + errRemitos.message); return; }
-
-  const { error: errCliente } = await sb.from("clientes").delete().eq("id", c.id);
-  if (errCliente) { alert("Error al borrar el cliente: " + errCliente.message); return; }
-
-  // Si estaba elegido en "Nuevo remito", lo quito
-  if (clienteActual && clienteActual.id === c.id) {
-    clienteActual = null;
-    document.getElementById("clienteSeleccionado").classList.add("hidden");
-    document.getElementById("btnVerTopCliente").classList.add("hidden");
-    document.getElementById("clienteBuscar").classList.remove("hidden");
-  }
-
-  clienteFichaActual = null;
-  document.getElementById("clienteFicha").classList.add("hidden");
-  document.getElementById("clienteFichaVacio").classList.remove("hidden");
-  await cargarClientes();
 }
 
 async function cargarClientes() {
@@ -748,94 +655,19 @@ async function cargarClientes() {
   renderClientesLista();
 }
 
-const _cmp = (a, b) => String(a || "").localeCompare(String(b || ""), "es", { sensitivity: "base", numeric: true });
-
-function ordenarClientes(arr, orden) {
-  const copia = [...arr];
-  if (orden === "alfa") {
-    copia.sort((a, b) => _cmp(a.nombre, b.nombre));
-  } else if (orden === "direccion") {
-    copia.sort((a, b) => {
-      if (!a.direccion && !b.direccion) return _cmp(a.nombre, b.nombre);
-      if (!a.direccion) return 1;
-      if (!b.direccion) return -1;
-      return _cmp(a.direccion, b.direccion) || _cmp(a.nombre, b.nombre);
-    });
-  } else { // "ultima": más reciente primero, sin compras al final
-    copia.sort((a, b) => {
-      if (!a._ultimaFecha && !b._ultimaFecha) return _cmp(a.nombre, b.nombre);
-      if (!a._ultimaFecha) return 1;
-      if (!b._ultimaFecha) return -1;
-      return b._ultimaFecha.localeCompare(a._ultimaFecha);
-    });
-  }
-  return copia;
-}
-
-// Clientes que pasan el filtro (nombre o dirección), en el orden elegido.
-function clientesFiltrados() {
-  const q = document.getElementById("clientesFiltro").value.trim().toLowerCase();
-  const orden = document.getElementById("listaOrden").value;
-  const filtrados = clientesCache.filter((c) =>
-    (c.nombre || "").toLowerCase().includes(q) || (c.direccion || "").toLowerCase().includes(q));
-  return ordenarClientes(filtrados, orden);
-}
-
-const ETIQUETA_ORDEN = { alfa: "alfabético (A–Z)", direccion: "por dirección", ultima: "por última venta" };
-
-function construirPDFListaClientes() {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF();
-  const orden = document.getElementById("listaOrden").value;
-  const lista = clientesFiltrados();
-
-  const cabecera = (y) => {
-    doc.setFontSize(9);
-    doc.setFont(undefined, "bold");
-    doc.text("#", 14, y);
-    doc.text("Cliente", 24, y);
-    doc.text("Dirección", 78, y);
-    doc.text("Teléfono", 142, y);
-    doc.text("Última venta", 196, y, { align: "right" });
-    doc.setFont(undefined, "normal");
-    doc.line(14, y + 2, 196, y + 2);
-    return y + 8;
-  };
-
-  doc.setFontSize(16);
-  doc.text("Lista de clientes", 14, 18);
-  doc.setFontSize(9);
-  doc.text(`Orden: ${ETIQUETA_ORDEN[orden]}  ·  ${lista.length} cliente${lista.length === 1 ? "" : "s"}  ·  ${new Date().toISOString().slice(0, 10)}`, 14, 25);
-
-  let y = cabecera(34);
-  doc.setFontSize(9);
-  lista.forEach((c) => {
-    const nom = doc.splitTextToSize(String(c.nombre || ""), 50);
-    const dir = doc.splitTextToSize(String(c.direccion || "—"), 60);
-    const lineas = Math.max(nom.length, dir.length);
-    if (y + lineas * 4.5 > 285) { doc.addPage(); y = cabecera(20); doc.setFontSize(9); }
-    doc.text(String(c.numero ?? "—"), 14, y);
-    doc.text(nom, 24, y);
-    doc.text(dir, 78, y);
-    doc.text(String(c.telefono || "—"), 142, y);
-    doc.text(c._ultimaFecha || "sin compras", 196, y, { align: "right" });
-    y += lineas * 4.5 + 2;
-  });
-  return doc;
-}
-
 function renderClientesLista() {
   const q = document.getElementById("clientesFiltro").value.trim().toLowerCase();
   const lista = document.getElementById("clientesLista");
   lista.innerHTML = "";
-  clientesFiltrados()
+  clientesCache
+    .filter((c) => c.nombre.toLowerCase().includes(q))
     .forEach((c) => {
       const li = document.createElement("li");
       const dias = diasDesde(c._ultimaFecha);
       const sub = c._ultimaFecha
         ? `hace ${dias} día${dias === 1 ? "" : "s"}`
         : "sin compras";
-      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${esc(c.nombre)}</div><div class="cliente-li-dir">${esc(c.direccion || "sin dirección")}</div><div class="cliente-li-sub">${sub}</div>`;
+      li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${c.nombre}</div><div class="cliente-li-sub">${sub}</div>`;
       if (clienteFichaActual && clienteFichaActual.id === c.id) li.classList.add("active");
       li.addEventListener("click", () => abrirFichaCliente(c));
       lista.appendChild(li);
@@ -916,97 +748,31 @@ async function cargarHistorial() {
   const q = document.getElementById("historialFiltro").value.trim();
   let query = sb
     .from("remitos")
-    .select("id, fecha, total, created_at, clientes(nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
+    .select("id, fecha, total, clientes(nombre)")
     .order("fecha", { ascending: false })
-    .order("created_at", { ascending: true })
     .limit(200);
 
   const { data, error } = await query;
   if (error) { console.error(error); return; }
 
   const filtrados = q
-    ? data.filter((r) => {
-        const t = q.toLowerCase();
-        return (r.clientes?.nombre || "").toLowerCase().includes(t) || (r.clientes?.direccion || "").toLowerCase().includes(t);
-      })
+    ? data.filter((r) => r.clientes?.nombre?.toLowerCase().includes(q.toLowerCase()))
     : data;
 
-  // Agrupa por fecha (días más recientes primero; dentro de cada día, en el orden en que se hicieron).
-  const dias = [];
-  filtrados.forEach((r) => {
-    let dia = dias[dias.length - 1];
-    if (!dia || dia.fecha !== r.fecha) { dia = { fecha: r.fecha, remitos: [] }; dias.push(dia); }
-    dia.remitos.push(r);
-  });
-
-  const etiquetaDia = (f) => {
-    const t = new Date(f + "T00:00:00").toLocaleDateString("es-UY", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-    return t.charAt(0).toUpperCase() + t.slice(1);
-  };
-  const horaDe = (iso) => iso ? new Date(iso).toLocaleTimeString("es-UY", { hour: "2-digit", minute: "2-digit" }) : "";
-
-  const body = document.getElementById("historialLista");
-  const detalleHTML = (r) => {
-    const its = r.remito_items || [];
-    if (!its.length) return `<p class="empty-row">Este remito no tiene productos cargados.</p>`;
-    return `<table class="items-table detalle-table">
-        <thead><tr><th>Código</th><th>Descripción</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">Subtotal</th></tr></thead>
-        <tbody>${its.map((it) => `<tr>
-          <td>${esc(it.codigo || "—")}</td>
-          <td>${esc(it.descripcion)}</td>
-          <td class="num">${esc(Number(it.cantidad))}</td>
-          <td class="num">${money(Number(it.precio_unitario))}</td>
-          <td class="num">${money(Number(it.cantidad) * Number(it.precio_unitario))}</td>
-        </tr>`).join("")}</tbody>
-        <tfoot><tr><td colspan="4" class="num"><strong>Total</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr></tfoot>
-      </table>`;
-  };
-
-  body.innerHTML = dias.length
-    ? dias.map((d) => {
-        const totalDia = d.remitos.reduce((acc, r) => acc + Number(r.total || 0), 0);
-        const n = d.remitos.length;
-        return `<div class="dia-bloque">
-          <div class="dia-header">
-            <span class="dia-fecha">${esc(etiquetaDia(d.fecha))}</span>
-            <span class="dia-resumen">${n} remito${n === 1 ? "" : "s"} · Total del día ${money(totalDia)}</span>
-          </div>
-          ${d.remitos.map((r) => {
-            const cant = (r.remito_items || []).length;
-            return `<div class="remito-card">
-            <div class="remito-head" data-toggle="${r.id}" role="button" tabindex="0" aria-expanded="false">
-              <span class="remito-flecha">▸</span>
-              <span class="hora">${esc(horaDe(r.created_at))}</span>
-              <span class="remito-cliente"><strong>${esc(r.clientes?.nombre || "—")}</strong><br><small class="dir-sub">${esc(r.clientes?.direccion || "sin dirección")} · ${cant} producto${cant === 1 ? "" : "s"}</small></span>
-              <span class="remito-total">${money(r.total)}</span>
-              <span class="row-actions">
-                <button class="icon-btn" data-action="edit" data-id="${r.id}" title="Editar">✎</button>
-                <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
-                <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
-                <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
-              </span>
-            </div>
-            <div class="remito-detalle hidden">${detalleHTML(r)}</div>
-          </div>`;
-          }).join("")}
-        </div>`;
-      }).join("")
-    : `<p class="empty-row">No hay remitos todavía</p>`;
-
-  // Abrir / cerrar el detalle de cada remito
-  body.querySelectorAll(".remito-head").forEach((head) => {
-    const alternar = () => {
-      const detalle = head.parentElement.querySelector(".remito-detalle");
-      const abierto = detalle.classList.toggle("hidden") === false;
-      head.setAttribute("aria-expanded", abierto ? "true" : "false");
-      head.querySelector(".remito-flecha").textContent = abierto ? "▾" : "▸";
-      head.parentElement.classList.toggle("abierto", abierto);
-    };
-    head.addEventListener("click", (e) => { if (!e.target.closest("button")) alternar(); });
-    head.addEventListener("keydown", (e) => {
-      if ((e.key === "Enter" || e.key === " ") && !e.target.closest("button")) { e.preventDefault(); alternar(); }
-    });
-  });
+  const body = document.getElementById("historialBody");
+  body.innerHTML = filtrados.length
+    ? filtrados.map((r) => `<tr>
+        <td>${r.fecha}</td>
+        <td>${r.clientes?.nombre || "—"}</td>
+        <td class="num">${money(r.total)}</td>
+        <td class="row-actions">
+          <button class="icon-btn" data-action="edit" data-id="${r.id}" title="Editar">✎</button>
+          <button class="icon-btn" data-action="print" data-id="${r.id}" title="Imprimir">🖨</button>
+          <button class="icon-btn" data-action="pdf" data-id="${r.id}" title="Descargar PDF">⬇</button>
+          <button class="row-remove" data-action="del" data-id="${r.id}" title="Borrar remito">✕</button>
+        </td>
+      </tr>`).join("")
+    : `<tr><td colspan="4" class="empty-row">No hay remitos todavía</td></tr>`;
   body.querySelectorAll("[data-action]").forEach((btn) => {
     const id = btn.dataset.id;
     if (btn.dataset.action === "edit") btn.addEventListener("click", () => editarRemito(id));
