@@ -23,6 +23,11 @@ function productoCampos(p) {
   };
 }
 
+// Agrega un parámetro único a la URL para saltear la copia guardada (caché) de GitHub / Supabase / navegador.
+function urlFresca(url) {
+  return url + (url.includes("?") ? "&" : "?") + "t=" + Date.now();
+}
+
 // ===================================================================
 // Estado
 // ===================================================================
@@ -70,7 +75,7 @@ function setupTabs() {
 
 async function cargarCatalogoBuscador() {
   try {
-    const res = await fetch(CONFIG.PRODUCTOS_JSON_URL);
+    const res = await fetch(urlFresca(CONFIG.PRODUCTOS_JSON_URL), { cache: "no-store" });
     const data = await res.json();
     return (Array.isArray(data) ? data : data.productos || []).map(productoCampos);
   } catch (e) {
@@ -84,7 +89,7 @@ async function cargarCatalogoBuscador() {
 async function cargarCatalogoDistribuidora() {
   if (!CONFIG.DISTRIBUIDORA_JSON_URL) return [];
   try {
-    const res = await fetch(CONFIG.DISTRIBUIDORA_JSON_URL);
+    const res = await fetch(urlFresca(CONFIG.DISTRIBUIDORA_JSON_URL), { cache: "no-store" });
     const data = await res.json();
     const marcas = {};
     (data.brands || []).forEach((b) => { marcas[b.id] = b; });
