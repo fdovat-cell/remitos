@@ -221,13 +221,28 @@ function setupNuevoRemito() {
     prodResultados.innerHTML = "";
     if (!q) return;
     const tokens = q.split(/\s+/);
-    // Los artículos manuales guardados van primero.
+    // Ordena por relevancia: primero el código exacto (ej. 1071 antes que 10712),
+    // después los códigos que empiezan igual, después el resto. Los artículos manuales
+    // guardados desempatan a su favor.
+    const puntaje = (p) => {
+      const cod = String(p.codigo || "").toLowerCase();
+      const nom = String(p.nombre || "").toLowerCase();
+      const texto = cod + " " + nom + " " + (p.busqueda || "");
+      if (!tokens.every((t) => texto.includes(t))) return -1;
+      if (cod && cod === q) return 1000;
+      if (cod && cod.startsWith(q)) return 500 - Math.min(cod.length - q.length, 50);
+      let s = 100;
+      if (nom.startsWith(q)) s += 50;
+      else if (nom.split(/[^a-z0-9áéíóúñ]+/).some((w) => w.startsWith(tokens[0]))) s += 30;
+      if (p.manual) s += 10;
+      return s;
+    };
     const matches = [...productosManuales, ...productos]
-      .filter((p) => {
-        const texto = (p.codigo + " " + p.nombre + " " + (p.busqueda || "")).toLowerCase();
-        return tokens.every((t) => texto.includes(t));
-      })
-      .slice(0, 10);
+      .map((p) => ({ p, s: puntaje(p) }))
+      .filter((x) => x.s >= 0)
+      .sort((a, b) => b.s - a.s)
+      .slice(0, 10)
+      .map((x) => x.p);
     matches.forEach((p) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
