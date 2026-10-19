@@ -294,9 +294,13 @@ function setupNuevoRemito() {
 
   // ---- Guardar / imprimir ----
   document.getElementById("btnGuardarRemito").addEventListener("click", guardarRemito);
-  document.getElementById("btnImprimirRemito").addEventListener("click", () => imprimirRemitoActual());
-  document.getElementById("btnDescargarRemito").addEventListener("click", () => {
-    if (window._ultimoRemito) descargarRemitoPDF(window._ultimoRemito);
+  document.getElementById("btnImprimirRemito").addEventListener("click", async () => {
+    const r = await remitoListoParaSalir();
+    if (r) imprimirRemitoActual(r);
+  });
+  document.getElementById("btnDescargarRemito").addEventListener("click", async () => {
+    const r = await remitoListoParaSalir();
+    if (r) descargarRemitoPDF(r);
   });
   document.getElementById("btnNuevoRemitoReset").addEventListener("click", () => {
     resetNuevoRemito();
@@ -391,8 +395,8 @@ async function guardarRemito() {
   msg.textContent = "";
   msg.className = "msg";
 
-  if (!clienteActual) { msg.textContent = "Elegí o creá un cliente."; msg.className = "msg error"; return; }
-  if (items.length === 0) { msg.textContent = "Agregá al menos un producto."; msg.className = "msg error"; return; }
+  if (!clienteActual) { msg.textContent = "Elegí o creá un cliente."; msg.className = "msg error"; return false; }
+  if (items.length === 0) { msg.textContent = "Agregá al menos un producto."; msg.className = "msg error"; return false; }
 
   const fecha = document.getElementById("remitoFecha").value;
   const total = items.reduce((s, it) => s + it.cantidad * it.precio, 0);
@@ -404,7 +408,7 @@ async function guardarRemito() {
     .select()
     .single();
 
-  if (errRemito) { msg.textContent = "Error al guardar: " + errRemito.message; msg.className = "msg error"; return; }
+  if (errRemito) { msg.textContent = "Error al guardar: " + errRemito.message; msg.className = "msg error"; return false; }
 
   const filas = items.map((it) => ({
     remito_id: remito.id,
@@ -421,7 +425,7 @@ async function guardarRemito() {
     await sb.from("remitos").delete().eq("id", remito.id);
     msg.textContent = "Error guardando los ítems, no se guardó nada: " + errItems.message;
     msg.className = "msg error";
-    return;
+    return false;
   }
 
   let avisoDuplicado = "";
@@ -443,6 +447,39 @@ async function guardarRemito() {
   document.getElementById("btnNuevoRemitoReset").classList.remove("hidden");
   window._ultimoRemito = { cliente: clienteActual, fecha, items: items.map((it) => ({ ...it })), total };
   cargarClientes();
+  return true;
+}
+
+// Foto de lo que hay en pantalla ahora mismo.
+function estadoRemitoActual() {
+  return {
+    cliente: clienteActual,
+    fecha: document.getElementById("remitoFecha").value,
+    items: items.map((it) => ({ ...it })),
+    total: items.reduce((s, it) => s + it.cantidad * it.precio, 0),
+  };
+}
+
+// Firma para comparar si lo de pantalla es igual a lo último guardado.
+function firmaRemito(r) {
+  return JSON.stringify([
+    r.cliente && r.cliente.id,
+    r.fecha,
+    r.items.map((i) => [i.codigo || "", i.descripcion, Number(i.cantidad), Number(i.precio)]),
+  ]);
+}
+
+// Antes de imprimir o descargar: si lo de pantalla cambió desde el último guardado,
+// se guarda primero. Así lo que sale en papel siempre es lo mismo que queda registrado.
+// Devuelve el remito a usar, o null si no se pudo guardar.
+async function remitoListoParaSalir() {
+  const actual = estadoRemitoActual();
+  if (!actual.cliente || actual.items.length === 0) return null;
+  if (!window._ultimoRemito || firmaRemito(window._ultimoRemito) !== firmaRemito(actual)) {
+    const ok = await guardarRemito();
+    if (!ok) return null;
+  }
+  return window._ultimoRemito;
 }
 
 // Construye el PDF del remito (usado tanto para imprimir como para descargar).
