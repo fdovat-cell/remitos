@@ -32,6 +32,28 @@ function urlFresca(url) {
 // Estado
 // ===================================================================
 let productos = [];        // catálogo de buscador-v2 + distribuidora
+const OCULTOS_KEY = "remitos_productos_ocultos";
+function leerOcultos() { try { return JSON.parse(localStorage.getItem(OCULTOS_KEY) || "[]"); } catch (e) { return []; } }
+function guardarOcultos(lista) { try { localStorage.setItem(OCULTOS_KEY, JSON.stringify(lista)); } catch (e) { /* sin almacenamiento */ } }
+const claveProducto = (p) => [p.codigo || "", p.nombre || "", p.precio || 0].join("|");
+
+// Quita un artículo de la búsqueda: los manuales se borran de Supabase; los del catálogo
+// (buscador-v2 / distribuidora) se ocultan en este navegador, sin tocar el catálogo.
+async function quitarProductoDeBusqueda(p) {
+  if (p.manual) {
+    if (!confirm(`¿Eliminar "${p.nombre}" (${money(p.precio)}) de los artículos guardados?\n\nSe borra para siempre.`)) return;
+    const { error } = await sb.from("productos_manuales").delete().eq("id", p.id);
+    if (error) { alert("No se pudo eliminar: " + error.message); return; }
+    productosManuales = productosManuales.filter((x) => x.id !== p.id);
+    return;
+  }
+  if (!confirm(`"${p.nombre}" (${money(p.precio)}) viene del catálogo.\n\n¿Ocultarlo de la búsqueda en este navegador? (No se borra del catálogo.)`)) return;
+  const lista = leerOcultos();
+  const k = claveProducto(p);
+  if (!lista.includes(k)) lista.push(k);
+  guardarOcultos(lista);
+}
+
 let productosManuales = []; // artículos cargados a mano, guardados en Supabase (tabla productos_manuales)
 
 // Escapa texto para meterlo en innerHTML
@@ -237,16 +259,22 @@ function setupNuevoRemito() {
       if (p.manual) s += 10;
       return s;
     };
+    const ocultos = new Set(leerOcultos());
     const matches = [...productosManuales, ...productos]
       .map((p) => ({ p, s: puntaje(p) }))
-      .filter((x) => x.s >= 0)
+      .filter((x) => x.s >= 0 && !ocultos.has(claveProducto(x.p)))
       .sort((a, b) => b.s - a.s)
       .slice(0, 10)
       .map((x) => x.p);
     matches.forEach((p) => {
       const div = document.createElement("div");
       div.className = "dropdown-item";
-      div.innerHTML = `<span>${p.nombre} <span class="item-code">${p.manual ? "manual" : p.codigo}</span></span><span class="item-price">${money(p.precio)}</span>`;
+      div.innerHTML = `<span>${p.nombre} <span class="item-code">${p.manual ? "manual" : p.codigo}</span></span><span class="item-right"><span class="item-price">${money(p.precio)}</span><button type="button" class="item-del" title="${p.manual ? "Eliminar este artículo guardado" : "Ocultar este artículo de la búsqueda"}">✕</button></span>`;
+      div.querySelector(".item-del").addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        await quitarProductoDeBusqueda(p);
+        prodInput.dispatchEvent(new Event("input"));
+      });
       div.addEventListener("click", () => {
         agregarItem({ codigo: p.manual ? "" : p.codigo, descripcion: p.nombre, cantidad: 1, precio: p.precio });
         prodInput.value = "";
@@ -255,6 +283,14 @@ function setupNuevoRemito() {
       });
       prodResultados.appendChild(div);
     });
+    const nOcultos = leerOcultos().length;
+    if (nOcultos) {
+      const r = document.createElement("div");
+      r.className = "dropdown-item dropdown-restore";
+      r.textContent = `↺ Mostrar ${nOcultos} oculto${nOcultos > 1 ? "s" : ""}`;
+      r.addEventListener("click", () => { guardarOcultos([]); prodInput.dispatchEvent(new Event("input")); });
+      prodResultados.appendChild(r);
+    }
   });
 
   document.addEventListener("click", (e) => {

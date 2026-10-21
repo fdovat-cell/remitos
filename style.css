@@ -156,6 +156,10 @@ input:focus, textarea:focus, select:focus {
 .dropdown-item:hover { background: var(--accent-soft); }
 .dropdown-item .item-code { color: var(--ink-soft); font-size: 0.8rem; }
 .dropdown-item .item-price { color: var(--ink-soft); white-space: nowrap; }
+.dropdown-item .item-right { display: flex; align-items: center; gap: 10px; }
+.dropdown-item .item-del { background: none; border: none; color: var(--ink-soft); cursor: pointer; font-size: 0.8rem; padding: 2px 4px; opacity: 0.55; }
+.dropdown-item .item-del:hover { color: #b3261e; opacity: 1; }
+.dropdown-restore { justify-content: center; color: var(--ink-soft); font-size: 0.8rem; }
 
 .cliente-chip {
   display: flex;
