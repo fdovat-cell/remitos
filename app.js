@@ -1017,7 +1017,7 @@ async function abrirFichaCliente(c) {
       conteo[key] = (conteo[key] || 0) + Number(it.cantidad);
     });
   });
-  const top = Object.entries(conteo).sort((a, b) => b[1] - a[1]).slice(0, 15);
+  const top = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
   const topBody = document.querySelector("#fichaTopProductos tbody");
   topBody.innerHTML = top.length
     ? top.map(([nombre, cant]) => `<tr><td>${nombre}</td><td class="num">${cant}</td></tr>`).join("")
@@ -1054,6 +1054,42 @@ async function abrirFichaCliente(c) {
 // ===================================================================
 function setupHistorial() {
   document.getElementById("historialFiltro").addEventListener("input", cargarHistorial);
+  document.getElementById("btnComprasGlobales").addEventListener("click", mostrarComprasGlobales);
+}
+
+// Compras globales: todos los productos de todos los remitos, de mayor a menor cantidad.
+// Se excluye a Blodwen (figura como cliente pero es un proveedor).
+async function mostrarComprasGlobales() {
+  document.getElementById("modalTopTitulo").textContent = "Compras globales (sin Blodwen)";
+  const tbody = document.querySelector("#modalTopTabla tbody");
+  tbody.innerHTML = `<tr><td colspan="2" class="empty-row">Cargando...</td></tr>`;
+  document.getElementById("modalTop").classList.remove("hidden");
+
+  const conteo = {};
+  const paso = 500;
+  for (let desde = 0; ; desde += paso) {
+    const { data, error } = await sb
+      .from("remitos")
+      .select("id, clientes(nombre), remito_items(descripcion, cantidad)")
+      .order("id")
+      .range(desde, desde + paso - 1);
+    if (error) {
+      tbody.innerHTML = `<tr><td colspan="2" class="empty-row">Error: ${esc(error.message)}</td></tr>`;
+      return;
+    }
+    (data || []).forEach((r) => {
+      if ((r.clientes?.nombre || "").toLowerCase().includes("blodwen")) return;
+      (r.remito_items || []).forEach((it) => {
+        conteo[it.descripcion] = (conteo[it.descripcion] || 0) + Number(it.cantidad);
+      });
+    });
+    if (!data || data.length < paso) break;
+  }
+
+  const lista = Object.entries(conteo).sort((a, b) => b[1] - a[1]);
+  tbody.innerHTML = lista.length
+    ? lista.map(([n, cant]) => `<tr><td>${esc(n)}</td><td class="num">${cant}</td></tr>`).join("")
+    : `<tr><td colspan="2" class="empty-row">Sin compras registradas todavía</td></tr>`;
 }
 
 async function cargarHistorial() {
@@ -1062,8 +1098,19 @@ async function cargarHistorial() {
     .from("remitos")
     .select("id, fecha, total, created_at, clientes(nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
     .order("fecha", { ascending: false })
-    .order("created_at", { ascending: true })
-    .limit(200);
+    .order("created_at", { ascending: true });
+
+  if (q) {
+    const qs = q.replace(/[,()%]/g, " ");
+    const { data: cls, error: errCl } = await sb
+      .from("clientes")
+      .select("id")
+      .or(`nombre.ilike.%${qs}%,direccion.ilike.%${qs}%`);
+    if (errCl) { console.error(errCl); return; }
+    query = query.in("cliente_id", (cls || []).map((c) => c.id)).limit(1000);
+  } else {
+    query = query.limit(200);
+  }
 
   const { data, error } = await query;
   if (error) { console.error(error); return; }

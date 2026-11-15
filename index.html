@@ -152,6 +152,7 @@
     <div class="card">
       <div class="card-header-row">
         <h2>Todos los remitos</h2>
+        <button id="btnComprasGlobales" class="btn-secondary" type="button">Compras globales</button>
         <input type="text" id="historialFiltro" placeholder="Filtrar por cliente o dirección..." autocomplete="off" />
       </div>
       <div id="historialLista"></div>
@@ -192,7 +193,7 @@
 
 <!-- ===================== MODAL: top productos rápido ===================== -->
 <div id="modalTop" class="modal hidden">
-  <div class="modal-box">
+  <div class="modal-box" style="max-height:85vh;overflow:auto">
     <h2 id="modalTopTitulo">Productos más comprados</h2>
     <table class="items-table" id="modalTopTabla">
       <thead><tr><th>Producto</th><th class="num">Cant. total</th></tr></thead>
