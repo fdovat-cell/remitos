@@ -1055,6 +1055,9 @@ async function abrirFichaCliente(c) {
 function setupHistorial() {
   document.getElementById("historialFiltro").addEventListener("input", cargarHistorial);
   document.getElementById("btnComprasGlobales").addEventListener("click", mostrarComprasGlobales);
+  document.getElementById("modalTopX").addEventListener("click", () => {
+    document.getElementById("modalTop").classList.add("hidden");
+  });
 }
 
 // Compras globales: todos los productos de todos los remitos, de mayor a menor cantidad.
