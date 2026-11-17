@@ -63,6 +63,7 @@
                 <th>Descripción</th>
                 <th class="num">Cant.</th>
                 <th class="num">Precio</th>
+                <th class="num" id="thCosto" style="display:none">Costo</th>
                 <th class="num">Subtotal</th>
                 <th></th>
               </tr>
@@ -72,10 +73,13 @@
             </tbody>
           </table>
 
+          <label class="hint" style="display:block;margin:8px 0"><input type="checkbox" id="chkCostos" /> Cargar costos (textil)</label>
+
           <div class="totals-row">
             <span>Total</span>
             <strong id="remitoTotal">$0</strong>
           </div>
+          <p id="remitoUtilidad" class="hint" style="display:none;text-align:right;margin:4px 0"></p>
 
           <div class="actions-row">
             <button id="btnGuardarRemito" class="btn-primary">Guardar remito</button>
@@ -103,6 +107,7 @@
               <option value="alfa">Alfabética (A–Z)</option>
               <option value="direccion">Por dirección</option>
               <option value="ultima" selected>Por última venta</option>
+              <option value="compra">Por mayor compra ($)</option>
             </select>
             <button id="btnImprimirLista" class="btn-secondary" type="button">Imprimir lista</button>
           </div>
@@ -128,6 +133,7 @@
               <div class="stat"><strong id="fichaTotalRemitos">0</strong><span>remitos</span></div>
               <div class="stat"><strong id="fichaTotalComprado">$0</strong><span>comprado en total</span></div>
               <div class="stat"><strong id="fichaUltimaCompra">—</strong><span>última compra</span></div>
+              <div class="stat"><strong id="fichaUtilidad">$0</strong><span>utilidad</span></div>
             </div>
 
             <h3>Productos más comprados</h3>
