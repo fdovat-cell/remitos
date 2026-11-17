@@ -4,6 +4,23 @@
 
 const sb = window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
 
+// Utilidad estimada: el costo se toma como el precio de venta menos este porcentaje.
+// (Cuando haya costos reales por producto, se reemplaza.)
+const MARGEN_ESTIMADO = 0.20;
+// Utilidad de una lista de ítems: con costo cargado = (precio - costo) x cantidad; sin costo = estimada.
+const utilidadItems = (its) => (its || []).reduce((suma, it) => {
+  const cant = Number(it.cantidad) || 0;
+  const precio = Number(it.precio_unitario ?? it.precio) || 0;
+  const costo = it.costo_unitario ?? it.costo;
+  return suma + (costo != null && costo !== "" ? (precio - Number(costo)) * cant : precio * cant * MARGEN_ESTIMADO);
+}, 0);
+
+// Fecha de hoy según el reloj de la PC (no en UTC: en Uruguay, desde las 21:00 UTC ya es "mañana").
+function fechaHoyLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 const money = (n) =>
   "$" + Number(n || 0).toLocaleString("es-UY", { maximumFractionDigits: 2 });
 
@@ -67,12 +84,13 @@ let clientesCache = [];
 let clienteFichaActual = null;
 let modalItemEditandoModo = "manual";
 let editandoRemitoId = null; // id del remito guardado que se está editando (null = remito nuevo)
+let mostrarCostos = false;   // columna Costo visible en el remito en edición
 
 // ===================================================================
 // Init
 // ===================================================================
 document.addEventListener("DOMContentLoaded", async () => {
-  document.getElementById("remitoFecha").value = new Date().toISOString().slice(0, 10);
+  document.getElementById("remitoFecha").value = fechaHoyLocal();
   setupTabs();
   setupNuevoRemito();
   setupClientes();
@@ -195,6 +213,11 @@ async function guardarProductoManual(descripcion, precio) {
 function setupNuevoRemito() {
   const clienteInput = document.getElementById("clienteBuscar");
   const clienteResultados = document.getElementById("clienteResultados");
+
+  document.getElementById("chkCostos").addEventListener("change", (e) => {
+    setMostrarCostos(e.target.checked);
+    renderItems();
+  });
 
   clienteInput.addEventListener("input", async () => {
     const q = clienteInput.value.trim();
@@ -371,7 +394,7 @@ function renderItems() {
   const body = document.getElementById("itemsBody");
   body.innerHTML = "";
   if (items.length === 0) {
-    body.innerHTML = `<tr id="itemsEmptyRow"><td colspan="6" class="empty-row">Todavía no agregaste productos</td></tr>`;
+    body.innerHTML = `<tr id="itemsEmptyRow"><td colspan="${mostrarCostos ? 7 : 6}" class="empty-row">Todavía no agregaste productos</td></tr>`;
   } else {
     items.forEach((it, i) => {
       const subtotal = it.cantidad * it.precio;
@@ -381,6 +404,7 @@ function renderItems() {
         <td><input type="text" value="${escapeAttr(it.descripcion)}" data-idx="${i}" data-field="descripcion" class="desc-input" /></td>
         <td class="num"><input type="number" min="0" step="1" value="${it.cantidad}" data-idx="${i}" data-field="cantidad" /></td>
         <td class="num"><input type="number" min="0" step="0.01" value="${it.precio}" data-idx="${i}" data-field="precio" /></td>
+        ${mostrarCostos ? `<td class="num"><input type="number" min="0" step="0.01" value="${it.costo ?? ""}" placeholder="20%" data-idx="${i}" data-field="costo" /></td>` : ""}
         <td class="num row-subtotal">${money(subtotal)}</td>
         <td><button class="row-remove" data-idx="${i}" title="Quitar">✕</button></td>
       `;
@@ -403,6 +427,14 @@ function renderItems() {
       inp.closest("tr").querySelector(".row-subtotal").textContent = money(subtotal);
       const total = items.reduce((s, it) => s + it.cantidad * it.precio, 0);
       document.getElementById("remitoTotal").textContent = money(total);
+      actualizarUtilidadPantalla();
+    });
+  });
+
+  body.querySelectorAll('input[data-field="costo"]').forEach((inp) => {
+    inp.addEventListener("input", () => {
+      items[Number(inp.dataset.idx)].costo = inp.value === "" ? null : (Number(inp.value) || 0);
+      actualizarUtilidadPantalla();
     });
   });
 
@@ -415,6 +447,21 @@ function renderItems() {
 
   const total = items.reduce((s, it) => s + it.cantidad * it.precio, 0);
   document.getElementById("remitoTotal").textContent = money(total);
+  actualizarUtilidadPantalla();
+}
+
+// Muestra u oculta la columna Costo (así no queda a la vista del cliente).
+function setMostrarCostos(v) {
+  mostrarCostos = !!v;
+  document.getElementById("chkCostos").checked = mostrarCostos;
+  document.getElementById("thCosto").style.display = mostrarCostos ? "" : "none";
+}
+
+function actualizarUtilidadPantalla() {
+  const el = document.getElementById("remitoUtilidad");
+  if (!mostrarCostos || items.length === 0) { el.style.display = "none"; return; }
+  el.style.display = "";
+  el.textContent = "Utilidad: " + money(utilidadItems(items));
 }
 
 function actualizarBotonGuardar() {
@@ -453,6 +500,7 @@ async function guardarRemito() {
     cantidad: it.cantidad,
     precio_unitario: it.precio,
     subtotal: it.cantidad * it.precio,
+    ...(it.costo != null ? { costo_unitario: it.costo } : {}),
   }));
   const { error: errItems } = await sb.from("remito_items").insert(filas);
 
@@ -501,7 +549,7 @@ function firmaRemito(r) {
   return JSON.stringify([
     r.cliente && r.cliente.id,
     r.fecha,
-    r.items.map((i) => [i.codigo || "", i.descripcion, Number(i.cantidad), Number(i.precio)]),
+    r.items.map((i) => [i.codigo || "", i.descripcion, Number(i.cantidad), Number(i.precio), i.costo ?? null]),
   ]);
 }
 
@@ -632,7 +680,7 @@ function descargarRemitoPDF(remito) {
 async function cargarRemitoCompleto(remitoId) {
   const { data, error } = await sb
     .from("remitos")
-    .select("id, fecha, total, cliente_id, clientes(id, nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
+    .select("id, fecha, total, cliente_id, clientes(id, nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario, costo_unitario)")
     .eq("id", remitoId)
     .single();
   if (error) { alert("Error al cargar el remito: " + error.message); return null; }
@@ -650,6 +698,7 @@ async function cargarRemitoCompleto(remitoId) {
       descripcion: it.descripcion,
       cantidad: Number(it.cantidad),
       precio: Number(it.precio_unitario),
+      costo: it.costo_unitario == null ? null : Number(it.costo_unitario),
     })),
   };
 }
@@ -680,6 +729,7 @@ async function editarRemito(remitoId) {
   seleccionarCliente(r.cliente);
   document.getElementById("remitoFecha").value = r.fecha;
   items = r.items;
+  setMostrarCostos(items.some((i) => i.costo != null));
   renderItems();
 
   const msg = document.getElementById("nuevoRemitoMsg");
@@ -695,12 +745,13 @@ function resetNuevoRemito() {
   clienteActual = null;
   items = [];
   editandoRemitoId = null;
+  setMostrarCostos(false);
   actualizarBotonGuardar();
   document.getElementById("clienteSeleccionado").classList.add("hidden");
   document.getElementById("btnVerTopCliente").classList.add("hidden");
   document.getElementById("clienteBuscar").classList.remove("hidden");
   document.getElementById("clienteBuscar").value = "";
-  document.getElementById("remitoFecha").value = new Date().toISOString().slice(0, 10);
+  document.getElementById("remitoFecha").value = fechaHoyLocal();
   document.getElementById("btnImprimirRemito").disabled = true;
   document.getElementById("btnDescargarRemito").disabled = true;
   document.getElementById("nuevoRemitoMsg").textContent = "";
@@ -815,7 +866,7 @@ function setupClientes() {
   document.getElementById("listaOrden").addEventListener("change", renderClientesLista);
   document.getElementById("btnImprimirLista").addEventListener("click", () => {
     if (!window.jspdf) return;
-    mostrarVistaPrevia(construirPDFListaClientes(), `lista-clientes-${new Date().toISOString().slice(0, 10)}.pdf`, "Lista de clientes");
+    mostrarVistaPrevia(construirPDFListaClientes(), `lista-clientes-${fechaHoyLocal()}.pdf`, "Lista de clientes");
   });
   document.getElementById("btnEditarCliente").addEventListener("click", () => {
     if (clienteFichaActual) abrirModalCliente(clienteFichaActual);
@@ -866,19 +917,32 @@ async function cargarClientes() {
   const { data: clientes, error } = await sb.from("clientes").select("*").order("nombre");
   if (error) { console.error(error); return; }
 
-  const { data: remitos, error: errRemitos } = await sb.from("remitos").select("cliente_id, fecha");
-  if (errRemitos) { console.error(errRemitos); }
+  // Trae todos los remitos en tandas (Supabase corta en 1000 filas por consulta).
+  const remitos = [];
+  for (let desde = 0; ; desde += 1000) {
+    const { data, error: errRemitos } = await sb
+      .from("remitos")
+      .select("cliente_id, fecha, total")
+      .order("id")
+      .range(desde, desde + 999);
+    if (errRemitos) { console.error(errRemitos); break; }
+    remitos.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
 
   const ultimaFechaPorCliente = {};
-  (remitos || []).forEach((r) => {
+  const totalPorCliente = {};
+  remitos.forEach((r) => {
     if (!ultimaFechaPorCliente[r.cliente_id] || r.fecha > ultimaFechaPorCliente[r.cliente_id]) {
       ultimaFechaPorCliente[r.cliente_id] = r.fecha;
     }
+    totalPorCliente[r.cliente_id] = (totalPorCliente[r.cliente_id] || 0) + Number(r.total || 0);
   });
 
   clientesCache = clientes.map((c) => ({
     ...c,
     _ultimaFecha: ultimaFechaPorCliente[c.id] || null,
+    _totalComprado: totalPorCliente[c.id] || 0,
   }));
 
   // Más recientes primero; sin compras, al final.
@@ -905,6 +969,8 @@ function ordenarClientes(arr, orden) {
       if (!b.direccion) return -1;
       return _cmp(a.direccion, b.direccion) || _cmp(a.nombre, b.nombre);
     });
+  } else if (orden === "compra") { // mayor $ comprado primero
+    copia.sort((a, b) => (b._totalComprado - a._totalComprado) || _cmp(a.nombre, b.nombre));
   } else { // "ultima": más reciente primero, sin compras al final
     copia.sort((a, b) => {
       if (!a._ultimaFecha && !b._ultimaFecha) return _cmp(a.nombre, b.nombre);
@@ -925,7 +991,7 @@ function clientesFiltrados() {
   return ordenarClientes(filtrados, orden);
 }
 
-const ETIQUETA_ORDEN = { alfa: "alfabético (A–Z)", direccion: "por dirección", ultima: "por última venta" };
+const ETIQUETA_ORDEN = { alfa: "alfabético (A–Z)", direccion: "por dirección", ultima: "por última venta", compra: "por mayor compra ($)" };
 
 function construirPDFListaClientes() {
   const { jsPDF } = window.jspdf;
@@ -949,7 +1015,7 @@ function construirPDFListaClientes() {
   doc.setFontSize(16);
   doc.text("Lista de clientes", 14, 18);
   doc.setFontSize(9);
-  doc.text(`Orden: ${ETIQUETA_ORDEN[orden]}  ·  ${lista.length} cliente${lista.length === 1 ? "" : "s"}  ·  ${new Date().toISOString().slice(0, 10)}`, 14, 25);
+  doc.text(`Orden: ${ETIQUETA_ORDEN[orden]}  ·  ${lista.length} cliente${lista.length === 1 ? "" : "s"}  ·  ${fechaHoyLocal()}`, 14, 25);
 
   let y = cabecera(34);
   doc.setFontSize(9);
@@ -976,9 +1042,10 @@ function renderClientesLista() {
     .forEach((c) => {
       const li = document.createElement("li");
       const dias = diasDesde(c._ultimaFecha);
-      const sub = c._ultimaFecha
+      let sub = c._ultimaFecha
         ? `hace ${dias} día${dias === 1 ? "" : "s"}`
         : "sin compras";
+      if (document.getElementById("listaOrden").value === "compra") sub = `${money(c._totalComprado)} comprado · ${sub}`;
       li.innerHTML = `<div class="cliente-li-nombre">#${c.numero ?? "—"} ${esc(c.nombre)}</div><div class="cliente-li-dir">${esc(c.direccion || "sin dirección")}</div><div class="cliente-li-sub">${sub}</div>`;
       if (clienteFichaActual && clienteFichaActual.id === c.id) li.classList.add("active");
       li.addEventListener("click", () => abrirFichaCliente(c));
@@ -999,7 +1066,7 @@ async function abrirFichaCliente(c) {
 
   const { data: remitos, error } = await sb
     .from("remitos")
-    .select("id, fecha, total, remito_items(codigo, descripcion, cantidad)")
+    .select("id, fecha, total, remito_items(codigo, descripcion, cantidad, precio_unitario, costo_unitario)")
     .eq("cliente_id", c.id)
     .order("fecha", { ascending: false });
 
@@ -1008,6 +1075,7 @@ async function abrirFichaCliente(c) {
   document.getElementById("fichaTotalRemitos").textContent = remitos.length;
   document.getElementById("fichaTotalComprado").textContent = money(remitos.reduce((s, r) => s + Number(r.total), 0));
   document.getElementById("fichaUltimaCompra").textContent = remitos[0] ? remitos[0].fecha : "—";
+  document.getElementById("fichaUtilidad").textContent = money(remitos.reduce((s, r) => s + utilidadItems(r.remito_items), 0));
 
   // top productos
   const conteo = {};
@@ -1099,7 +1167,7 @@ async function cargarHistorial() {
   const q = document.getElementById("historialFiltro").value.trim();
   let query = sb
     .from("remitos")
-    .select("id, fecha, total, created_at, clientes(nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario)")
+    .select("id, fecha, total, created_at, clientes(nombre, direccion), remito_items(codigo, descripcion, cantidad, precio_unitario, costo_unitario)")
     .order("fecha", { ascending: false })
     .order("created_at", { ascending: true });
 
@@ -1143,6 +1211,10 @@ async function cargarHistorial() {
   const detalleHTML = (r) => {
     const its = r.remito_items || [];
     if (!its.length) return `<p class="empty-row">Este remito no tiene productos cargados.</p>`;
+    const conCosto = its.filter((it) => it.costo_unitario != null).length;
+    const etiquetaUtil = conCosto === 0
+      ? `Utilidad estimada (${Math.round(MARGEN_ESTIMADO * 100)}%)`
+      : conCosto === its.length ? "Utilidad (costos cargados)" : `Utilidad (costos cargados; ${Math.round(MARGEN_ESTIMADO * 100)}% en el resto)`;
     return `<table class="items-table detalle-table">
         <thead><tr><th>Código</th><th>Descripción</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">Subtotal</th></tr></thead>
         <tbody>${its.map((it) => `<tr>
@@ -1152,18 +1224,20 @@ async function cargarHistorial() {
           <td class="num">${money(Number(it.precio_unitario))}</td>
           <td class="num">${money(Number(it.cantidad) * Number(it.precio_unitario))}</td>
         </tr>`).join("")}</tbody>
-        <tfoot><tr><td colspan="4" class="num"><strong>Total</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr></tfoot>
+        <tfoot><tr><td colspan="4" class="num"><strong>Total</strong></td><td class="num"><strong>${money(r.total)}</strong></td></tr>
+          <tr><td colspan="4" class="num">${etiquetaUtil}</td><td class="num">${money(utilidadItems(its))}</td></tr></tfoot>
       </table>`;
   };
 
   body.innerHTML = dias.length
     ? dias.map((d) => {
         const totalDia = d.remitos.reduce((acc, r) => acc + Number(r.total || 0), 0);
+        const utilDia = d.remitos.reduce((acc, r) => acc + utilidadItems(r.remito_items), 0);
         const n = d.remitos.length;
         return `<div class="dia-bloque">
           <div class="dia-header">
             <span class="dia-fecha">${esc(etiquetaDia(d.fecha))}</span>
-            <span class="dia-resumen">${n} remito${n === 1 ? "" : "s"} · Total del día ${money(totalDia)}</span>
+            <span class="dia-resumen">${n} remito${n === 1 ? "" : "s"} · Total del día ${money(totalDia)} · Utilidad ${money(utilDia)}</span>
           </div>
           ${d.remitos.map((r) => {
             const cant = (r.remito_items || []).length;
