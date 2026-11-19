@@ -96,6 +96,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupClientes();
   setupVistaPrevia();
   setupHistorial();
+  setupResumen();
   cargarProductos();
   cargarProductosManuales();
   cargarClientes();
@@ -109,6 +110,7 @@ function setupTabs() {
       btn.classList.add("active");
       document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
       if (btn.dataset.tab === "historial") cargarHistorial();
+      if (btn.dataset.tab === "resumen") cargarResumen();
     });
   });
 }
@@ -1282,4 +1284,89 @@ async function cargarHistorial() {
     if (btn.dataset.action === "pdf") btn.addEventListener("click", () => redescargarRemito(id));
     if (btn.dataset.action === "del") btn.addEventListener("click", () => borrarRemito(id, cargarHistorial));
   });
+}
+
+// ===================================================================
+// RESUMEN (tab): ventas y utilidades por período, total o de un cliente
+// ===================================================================
+function setupResumen() {
+  const hoy = fechaHoyLocal();
+  document.getElementById("resDesde").value = hoy.slice(0, 8) + "01"; // primer día del mes
+  document.getElementById("resHasta").value = hoy;
+  document.getElementById("btnResumen").addEventListener("click", cargarResumen);
+  document.getElementById("resCliente").addEventListener("change", cargarResumen);
+}
+
+function poblarClientesResumen() {
+  const sel = document.getElementById("resCliente");
+  const actual = sel.value;
+  const lista = [...clientesCache].sort((a, b) => _cmp(a.nombre, b.nombre));
+  sel.innerHTML = `<option value="">Todos los clientes</option>` +
+    lista.map((c) => `<option value="${esc(c.id)}">${esc(c.nombre)}</option>`).join("");
+  sel.value = actual;
+}
+
+async function cargarResumen() {
+  poblarClientesResumen();
+  const desde = document.getElementById("resDesde").value;
+  const hasta = document.getElementById("resHasta").value;
+  const clienteId = document.getElementById("resCliente").value;
+  const msg = document.getElementById("resumenMsg");
+  const totales = document.getElementById("resumenTotales");
+  const porCliente = document.getElementById("resumenPorCliente");
+
+  if (desde && hasta && desde > hasta) {
+    msg.textContent = "La fecha Desde es posterior a la fecha Hasta.";
+    totales.innerHTML = ""; porCliente.innerHTML = "";
+    return;
+  }
+  msg.textContent = "Cargando...";
+
+  const remitos = [];
+  const paso = 500;
+  for (let ini = 0; ; ini += paso) {
+    let q = sb
+      .from("remitos")
+      .select("id, fecha, total, cliente_id, clientes(nombre), remito_items(cantidad, precio_unitario, costo_unitario)")
+      .order("id")
+      .range(ini, ini + paso - 1);
+    if (desde) q = q.gte("fecha", desde);
+    if (hasta) q = q.lte("fecha", hasta);
+    if (clienteId) q = q.eq("cliente_id", clienteId);
+    const { data, error } = await q;
+    if (error) { msg.textContent = "Error: " + error.message; return; }
+    remitos.push(...(data || []));
+    if (!data || data.length < paso) break;
+  }
+
+  // En "Todos" se excluye a Blodwen (es proveedor). Si se elige un cliente puntual, se muestra tal cual.
+  const validos = clienteId ? remitos : remitos.filter((r) => !(r.clientes?.nombre || "").toLowerCase().includes("blodwen"));
+
+  let ventas = 0, utilidad = 0;
+  const porC = {};
+  validos.forEach((r) => {
+    const v = Number(r.total || 0);
+    const u = utilidadItems(r.remito_items);
+    ventas += v; utilidad += u;
+    const k = r.cliente_id;
+    if (!porC[k]) porC[k] = { nombre: r.clientes?.nombre || "—", remitos: 0, ventas: 0, utilidad: 0 };
+    porC[k].remitos += 1; porC[k].ventas += v; porC[k].utilidad += u;
+  });
+
+  msg.textContent = validos.length ? "" : "No hay remitos en ese período.";
+  totales.innerHTML = `
+    <div class="stat"><strong>${validos.length}</strong><span>remitos</span></div>
+    <div class="stat"><strong>${money(ventas)}</strong><span>ventas</span></div>
+    <div class="stat"><strong>${money(ventas - utilidad)}</strong><span>costo</span></div>
+    <div class="stat"><strong>${money(utilidad)}</strong><span>utilidad</span></div>`;
+
+  if (clienteId) { porCliente.innerHTML = ""; return; }
+  const filas = Object.values(porC).sort((a, b) => b.ventas - a.ventas);
+  porCliente.innerHTML = filas.length
+    ? `<h3>Por cliente</h3>
+       <table class="items-table">
+         <thead><tr><th>Cliente</th><th class="num">Remitos</th><th class="num">Ventas</th><th class="num">Utilidad</th></tr></thead>
+         <tbody>${filas.map((f) => `<tr><td>${esc(f.nombre)}</td><td class="num">${f.remitos}</td><td class="num">${money(f.ventas)}</td><td class="num">${money(f.utilidad)}</td></tr>`).join("")}</tbody>
+       </table>`
+    : "";
 }
